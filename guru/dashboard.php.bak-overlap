@@ -1,0 +1,689 @@
+<?php
+require_once '../config/config.php';
+require_once '../config/cache_helpers.php';
+requireRole('guru');
+
+$db = new Database();
+$conn = $db->getConnection();
+
+/* ---------- Helper ---------- */
+function dash_bulan($n) {
+    $b = [1 => 'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return $b[(int)$n] ?? '';
+}
+function dash_tgl($dt) {
+    $t = strtotime($dt);
+    if (!$t) return '-';
+    return date('d', $t) . ' ' . dash_bulan(date('n', $t)) . ' ' . date('Y', $t);
+}
+function dash_relatif($dt) {
+    $t = strtotime($dt);
+    if (!$t) return '-';
+    $d = time() - $t;
+    if ($d < 60) return 'baru saja';
+    if ($d < 3600) return floor($d / 60) . ' menit lalu';
+    if ($d < 86400) return floor($d / 3600) . ' jam lalu';
+    if ($d < 604800) return floor($d / 86400) . ' hari lalu';
+    return dash_tgl($dt);
+}
+function dash_spark(array $values, $w = 92, $h = 30) {
+    if (count($values) < 2) $values = [0, 0];
+    $max = max($values);
+    $min = min($values);
+    $range = $max - $min;
+    if ($range <= 0) $range = 1;
+    $n = count($values);
+    $pts = [];
+    foreach ($values as $i => $v) {
+        $x = round(($i / ($n - 1)) * $w, 1);
+        $y = round($h - (($v - $min) / $range) * ($h - 5) - 2.5, 1);
+        $pts[] = $x . ',' . $y;
+    }
+    $poly = implode(' ', $pts);
+    $area = '0,' . $h . ' ' . $poly . ' ' . $w . ',' . $h;
+    return '<svg class="spark" width="' . $w . '" height="' . $h . '" viewBox="0 0 ' . $w . ' ' . $h . '" fill="none" aria-hidden="true">'
+        . '<polygon points="' . $area . '" fill="currentColor" opacity=".10"></polygon>'
+        . '<polyline points="' . $poly . '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>'
+        . '</svg>';
+}
+function dash_activity_meta($text) {
+    $t = mb_strtolower($text);
+    if (strpos($t, 'login') !== false) return ['fa-right-to-bracket', 'indigo'];
+    if (strpos($t, 'hapus') !== false) return ['fa-trash-can', 'rose'];
+    if (strpos($t, 'soal') !== false) return ['fa-file-circle-plus', 'violet'];
+    if (strpos($t, 'ujian') !== false) return ['fa-clipboard-check', 'emerald'];
+    if (strpos($t, 'token') !== false) return ['fa-key', 'amber'];
+    if (strpos($t, 'nilai') !== false || strpos($t, 'hasil') !== false) return ['fa-chart-simple', 'blue'];
+    if (strpos($t, 'user') !== false || strpos($t, 'peserta') !== false) return ['fa-user', 'blue'];
+    return ['fa-circle-info', 'slate'];
+}
+
+$guru_id = (int)($_SESSION['user_id'] ?? 0);
+
+/* ---------- Semua mapel milik guru ---------- */
+$stmt = $conn->prepare("SELECT id, nama FROM subjects WHERE guru_id = ? ORDER BY nama");
+$stmt->execute([$guru_id]);
+$subjects = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$subjectIds = array_map('intval', array_column($subjects, 'id'));
+
+$subjectNames = array_column($subjects, 'nama');
+$subjectLabel = $subjectNames ? implode(', ', $subjectNames) : '';
+
+/* ---------- Data (cached 5 menit) ---------- */
+$dash = cacheRemember("stats:guru:dashboard:v1:{$guru_id}", function () use ($conn, $subjectIds) {
+    $s = [
+        'total_questions' => 0, 'total_exams' => 0, 'active_exams' => 0, 'draft_exams' => 0,
+        'completed_exams' => 0, 'total_students' => 0, 'total_results' => 0, 'avg_score' => 0.0,
+        'ongoing' => 0,
+    ];
+    $series = ['soal' => [], 'hasil' => []];
+
+    if (empty($subjectIds)) {
+        return ['stats' => $s, 'series' => $series];
+    }
+
+    $ph = implode(',', array_fill(0, count($subjectIds), '?'));
+
+    $one = function ($sql, $params) use ($conn) {
+        $st = $conn->prepare($sql);
+        $st->execute($params);
+        return $st->fetchColumn();
+    };
+
+    $s['total_questions'] = (int)$one("SELECT COUNT(*) FROM questions WHERE subject_id IN ($ph)", $subjectIds);
+    $s['total_exams']     = (int)$one("SELECT COUNT(*) FROM exams WHERE subject_id IN ($ph)", $subjectIds);
+    $s['active_exams']    = (int)$one("SELECT COUNT(*) FROM exams WHERE subject_id IN ($ph) AND status = 'aktif'", $subjectIds);
+    $s['draft_exams']     = (int)$one("SELECT COUNT(*) FROM exams WHERE subject_id IN ($ph) AND status = 'draft'", $subjectIds);
+    $s['completed_exams'] = (int)$one("SELECT COUNT(*) FROM exams WHERE subject_id IN ($ph) AND status = 'selesai'", $subjectIds);
+
+    $s['total_students'] = (int)$one(
+        "SELECT COUNT(DISTINCT er.user_id) FROM exam_results er
+         JOIN exams e ON e.id = er.exam_id WHERE e.subject_id IN ($ph)",
+        $subjectIds
+    );
+    $s['total_results'] = (int)$one(
+        "SELECT COUNT(*) FROM exam_results er
+         JOIN exams e ON e.id = er.exam_id
+         WHERE e.subject_id IN ($ph) AND er.status = 'selesai'",
+        $subjectIds
+    );
+    $s['avg_score'] = (float)$one(
+        "SELECT COALESCE(ROUND(AVG(er.nilai), 1), 0) FROM exam_results er
+         JOIN exams e ON e.id = er.exam_id
+         WHERE e.subject_id IN ($ph) AND er.status = 'selesai'",
+        $subjectIds
+    );
+    $s['ongoing'] = (int)$one(
+        "SELECT COUNT(*) FROM exam_sessions es
+         JOIN exams e ON e.id = es.exam_id
+         WHERE e.subject_id IN ($ph) AND es.is_active = 1",
+        $subjectIds
+    );
+
+    $queries = [
+        'soal'  => "SELECT DATE(q.created_at) d, COUNT(*) c FROM questions q
+                    WHERE q.subject_id IN ($ph) AND q.created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+                    GROUP BY DATE(q.created_at)",
+        'hasil' => "SELECT DATE(er.created_at) d, COUNT(*) c FROM exam_results er
+                    JOIN exams e ON e.id = er.exam_id
+                    WHERE e.subject_id IN ($ph) AND er.created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+                    GROUP BY DATE(er.created_at)",
+    ];
+    foreach ($queries as $key => $sql) {
+        $series[$key] = [];
+        $st = $conn->prepare($sql);
+        $st->execute($subjectIds);
+        foreach ($st as $r) {
+            $series[$key][$r['d']] = (int)$r['c'];
+        }
+    }
+
+    return ['stats' => $s, 'series' => $series];
+}, 300);
+
+$stats  = $dash['stats'];
+$series = $dash['series'];
+
+/* ---------- Susun deret 30 hari ---------- */
+$labels = [];
+$soalSeries = $hasilSeries = $examSeries = [];
+for ($i = 29; $i >= 0; $i--) {
+    $d = date('Y-m-d', strtotime("-$i days"));
+    $labels[]      = date('d', strtotime($d)) . ' ' . dash_bulan(date('n', strtotime($d)));
+    $soalSeries[]  = $series['soal'][$d] ?? 0;
+    $hasilSeries[] = $series['hasil'][$d] ?? 0;
+}
+$last7 = function (array $a) { return array_slice($a, -7); };
+$newSoal  = array_sum($last7($soalSeries));
+$newHasil = array_sum($last7($hasilSeries));
+
+/* ---------- Data live ---------- */
+$recent_exams = [];
+$activities   = [];
+$announcements = [];
+
+if (!empty($subjectIds)) {
+    $ph = implode(',', array_fill(0, count($subjectIds), '?'));
+
+    $st = $conn->prepare(
+        "SELECT e.id, e.judul, e.kelas, e.status, e.waktu_mulai, e.token,
+                COALESCE(s.nama, '-') AS subject,
+                (SELECT COUNT(*) FROM exam_results er WHERE er.exam_id = e.id) AS participants
+         FROM exams e LEFT JOIN subjects s ON s.id = e.subject_id
+         WHERE e.subject_id IN ($ph)
+         ORDER BY e.created_at DESC, e.id DESC LIMIT 6"
+    );
+    $st->execute($subjectIds);
+    $recent_exams = $st->fetchAll(PDO::FETCH_ASSOC);
+
+    $st = $conn->prepare(
+        "SELECT l.*, u.nama FROM logs l LEFT JOIN users u ON u.id = l.user_id
+         WHERE l.user_id = ? ORDER BY l.waktu DESC LIMIT 6"
+    );
+    $st->execute([$guru_id]);
+    $activities = $st->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$st = $conn->prepare(
+    "SELECT * FROM announcements
+     WHERE (target_role = 'guru' OR target_role IS NULL) AND is_active = 1
+     ORDER BY tanggal DESC LIMIT 3"
+);
+$st->execute();
+$announcements = $st->fetchAll(PDO::FETCH_ASSOC);
+
+$statusMap = [
+    'aktif'   => ['Aktif', 'aktif'],
+    'selesai' => ['Selesai', 'selesai'],
+    'draft'   => ['Draft', 'draft'],
+];
+$guruName = $_SESSION['nama'] ?? 'Guru';
+$chartColors = ['#10B981', '#3B82F6', '#F59E0B'];
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Guru - <?php echo getSetting('app_name', 'CBT SMK'); ?></title>
+    <link rel="icon" type="image/x-icon" href="../<?php echo getSetting('app_favicon', 'assets/img/favicon.ico'); ?>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="../assets/css/mobile-menu.css" rel="stylesheet">
+    <link href="../assets/css/admin-style.css?v=20261101a" rel="stylesheet">
+    <link href="../assets/css/table-style.css" rel="stylesheet">
+    <link href="../assets/css/ui-components.css" rel="stylesheet">
+    <link href="../assets/css/admin-dashboard.css?v=20261031c" rel="stylesheet">
+    <script src="../assets/js/mobile-menu.js" defer></script>
+    <script src="../assets/js/admin-script.js" defer></script>
+    <script src="../assets/js/table-script.js" defer></script>
+    <link href="../assets/css/app-theme.css?v=20261101c" rel="stylesheet">
+</head>
+<body class="bg-gray-50">
+    <?php include '../assets/includes/guru_nav_sidebar.php'; ?>
+
+    <div class="flex-1 dashboard-page main-content">
+        <div class="dash-inner">
+
+            <!-- Header -->
+            <header class="dash-head">
+                <div class="dash-head-copy">
+                    <p class="dash-eyebrow">
+                        <span class="dot-live" aria-hidden="true"></span>
+                        Ringkasan mengajar
+                        <span class="sep">/</span>
+                        <?php echo dash_tgl(date('Y-m-d')); ?> &middot; <?php echo date('H:i'); ?> WIB
+                    </p>
+                    <h1 class="dash-title">Selamat datang kembali, <?php echo htmlspecialchars($guruName); ?></h1>
+                    <?php if ($subjectLabel): ?>
+                        <p class="dash-sub">Mata pelajaran: <strong><?php echo htmlspecialchars($subjectLabel); ?></strong></p>
+                    <?php else: ?>
+                        <p class="dash-sub" style="color:#be123c">Anda belum ditugaskan ke mata pelajaran. Hubungi admin.</p>
+                    <?php endif; ?>
+                </div>
+                <div class="dash-actions">
+                    <a href="monitoring.php" class="d-btn d-btn-ghost">
+                        <i class="fas fa-satellite-dish" aria-hidden="true"></i> Monitoring
+                    </a>
+                    <a href="exams.php?action=add" class="d-btn d-btn-primary">
+                        <i class="fas fa-plus" aria-hidden="true"></i> Buat Ujian
+                    </a>
+                </div>
+            </header>
+
+            <!-- KPI -->
+            <section class="kpi-grid" aria-label="Ringkasan utama">
+                <article class="kpi" style="--kpi-glow: rgba(168,85,247,.10)">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Total Soal</span>
+                        <span class="kpi-icon tint-violet"><i class="fas fa-layer-group" aria-hidden="true"></i></span>
+                    </div>
+                    <p class="kpi-value"><?php echo number_format($stats['total_questions'], 0, ',', '.'); ?></p>
+                    <div class="kpi-foot">
+                        <span class="delta <?php echo $newSoal > 0 ? 'up' : 'flat'; ?>">
+                            <i class="fas <?php echo $newSoal > 0 ? 'fa-arrow-trend-up' : 'fa-minus'; ?>" aria-hidden="true"></i>
+                            +<?php echo number_format($newSoal, 0, ',', '.'); ?>
+                        </span>
+                        <span class="kpi-spark" style="color:#A855F7"><?php echo dash_spark($last7($soalSeries)); ?></span>
+                    </div>
+                    <p class="kpi-note">soal baru &middot; 7 hari terakhir</p>
+                </article>
+
+                <article class="kpi" style="--kpi-glow: rgba(16,185,129,.10)">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Ujian Aktif</span>
+                        <span class="kpi-icon tint-emerald"><i class="fas fa-tower-broadcast" aria-hidden="true"></i></span>
+                    </div>
+                    <p class="kpi-value"><?php echo number_format($stats['active_exams'], 0, ',', '.'); ?></p>
+                    <div class="kpi-foot">
+                        <span class="delta up"><span class="pulse-dot" aria-hidden="true"></span> Live</span>
+                        <span class="kpi-spark" style="color:#10B981"><?php echo dash_spark($last7($hasilSeries)); ?></span>
+                    </div>
+                    <p class="kpi-note"><?php echo (int)$stats['total_exams']; ?> ujian total &middot; <?php echo (int)$stats['ongoing']; ?> sesi berjalan</p>
+                </article>
+
+                <article class="kpi" style="--kpi-glow: rgba(99,102,241,.10)">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Siswa Terlibat</span>
+                        <span class="kpi-icon tint-indigo"><i class="fas fa-users" aria-hidden="true"></i></span>
+                    </div>
+                    <p class="kpi-value"><?php echo number_format($stats['total_students'], 0, ',', '.'); ?></p>
+                    <div class="kpi-foot">
+                        <span class="delta flat">
+                            <i class="fas fa-file-circle-check" aria-hidden="true"></i>
+                            <?php echo (int)$stats['total_results']; ?> hasil
+                        </span>
+                    </div>
+                    <p class="kpi-note">peserta yang mengerjakan ujian Anda</p>
+                </article>
+
+                <article class="kpi" style="--kpi-glow: rgba(245,158,11,.12)">
+                    <div class="kpi-top">
+                        <span class="kpi-label">Rata-rata Nilai</span>
+                        <span class="kpi-icon tint-amber"><i class="fas fa-chart-simple" aria-hidden="true"></i></span>
+                    </div>
+                    <p class="kpi-value"><?php echo number_format($stats['avg_score'], 1, ',', '.'); ?><small>/100</small></p>
+                    <div class="kpi-foot">
+                        <span class="delta <?php echo $newHasil > 0 ? 'up' : 'flat'; ?>">
+                            <i class="fas <?php echo $newHasil > 0 ? 'fa-arrow-trend-up' : 'fa-minus'; ?>" aria-hidden="true"></i>
+                            +<?php echo number_format($newHasil, 0, ',', '.'); ?>
+                        </span>
+                        <span class="kpi-spark" style="color:#F59E0B"><?php echo dash_spark($last7($hasilSeries)); ?></span>
+                    </div>
+                    <p class="kpi-note">hasil masuk &middot; 7 hari terakhir</p>
+                </article>
+            </section>
+
+            <!-- Chart + donut -->
+            <section class="dash-grid dash-grid-2-1" aria-label="Analitik">
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <p class="panel-eyebrow">Analitik</p>
+                            <h2 class="panel-title">Tren Bank Soal &amp; Hasil Ujian</h2>
+                        </div>
+                        <div class="seg" role="group" aria-label="Periode grafik">
+                            <button type="button" class="seg-btn is-active" data-period="7">7 hari</button>
+                            <button type="button" class="seg-btn" data-period="30">30 hari</button>
+                        </div>
+                    </div>
+                    <div class="chart-wrap">
+                        <canvas id="trendChart" aria-label="Grafik tren soal baru dan hasil ujian" role="img"></canvas>
+                    </div>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-dot" style="background:#6366F1"></span> Soal baru</span>
+                        <span class="legend-item"><span class="legend-dot" style="background:#10B981"></span> Hasil ujian</span>
+                        <span class="legend-note"><?php echo number_format(array_sum($soalSeries), 0, ',', '.'); ?> soal &middot; <?php echo number_format(array_sum($hasilSeries), 0, ',', '.'); ?> hasil dalam 30 hari</span>
+                    </div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <p class="panel-eyebrow">Ujian</p>
+                            <h2 class="panel-title">Status Ujian</h2>
+                        </div>
+                        <a href="exams.php" class="panel-link">Kelola</a>
+                    </div>
+                    <?php if ((int)$stats['total_exams'] === 0): ?>
+                        <div class="empty-state">
+                            <i class="fas fa-folder-open" aria-hidden="true"></i>
+                            <p>Belum ada ujian yang dibuat.</p>
+                            <a href="exams.php?action=add" class="d-btn d-btn-ghost">Buat ujian</a>
+                        </div>
+                    <?php else: ?>
+                        <div class="donut-wrap">
+                            <canvas id="statusChart" aria-label="Komposisi status ujian" role="img"></canvas>
+                            <div class="donut-center" aria-hidden="true">
+                                <strong><?php echo number_format($stats['total_exams'], 0, ',', '.'); ?></strong>
+                                <span>total ujian</span>
+                            </div>
+                        </div>
+                        <ul class="legend-list">
+                            <li>
+                                <span class="legend-dot" style="background:#10B981"></span>
+                                <span class="legend-name">Aktif</span>
+                                <span class="legend-value"><?php echo (int)$stats['active_exams']; ?></span>
+                                <span class="legend-pct"><?php echo $stats['total_exams'] > 0 ? round(($stats['active_exams'] / $stats['total_exams']) * 100) : 0; ?>%</span>
+                            </li>
+                            <li>
+                                <span class="legend-dot" style="background:#3B82F6"></span>
+                                <span class="legend-name">Selesai</span>
+                                <span class="legend-value"><?php echo (int)$stats['completed_exams']; ?></span>
+                                <span class="legend-pct"><?php echo $stats['total_exams'] > 0 ? round(($stats['completed_exams'] / $stats['total_exams']) * 100) : 0; ?>%</span>
+                            </li>
+                            <li>
+                                <span class="legend-dot" style="background:#F59E0B"></span>
+                                <span class="legend-name">Draft</span>
+                                <span class="legend-value"><?php echo (int)$stats['draft_exams']; ?></span>
+                                <span class="legend-pct"><?php echo $stats['total_exams'] > 0 ? round(($stats['draft_exams'] / $stats['total_exams']) * 100) : 0; ?>%</span>
+                            </li>
+                        </ul>
+                    <?php endif; ?>
+                </article>
+            </section>
+
+            <!-- Recent exams + activity -->
+            <section class="dash-grid dash-grid-2-1 dash-grid-start" aria-label="Aktivitas terbaru">
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <p class="panel-eyebrow">Terbaru</p>
+                            <h2 class="panel-title">Ujian Terbaru</h2>
+                        </div>
+                        <a href="exams.php" class="panel-link">Lihat semua</a>
+                    </div>
+                    <div class="table-scroll">
+                        <table class="dash-table">
+                            <caption class="sr-only">Daftar ujian terbaru Anda</caption>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Ujian</th>
+                                    <th scope="col" class="hide-sm">Kelas</th>
+                                    <th scope="col" class="hide-sm">Peserta</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col" class="hide-sm">Mulai</th>
+                                    <th scope="col"><span class="sr-only">Aksi</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (empty($recent_exams)): ?>
+                                    <tr><td colspan="6">
+                                        <div class="empty-state compact">
+                                            <i class="fas fa-clipboard-list" aria-hidden="true"></i>
+                                            <p>Belum ada ujian. Mulai dengan membuat ujian baru.</p>
+                                        </div>
+                                    </td></tr>
+                                <?php else: ?>
+                                    <?php foreach ($recent_exams as $ex): ?>
+                                        <?php $st = $statusMap[$ex['status']] ?? ['-', 'draft']; ?>
+                                        <tr>
+                                            <td>
+                                                <div class="cell-main">
+                                                    <span class="exam-dot tint-<?php echo $st[1] === 'aktif' ? 'emerald' : ($st[1] === 'selesai' ? 'blue' : 'amber'); ?>" aria-hidden="true">
+                                                        <i class="fas fa-clipboard-list"></i>
+                                                    </span>
+                                                    <div>
+                                                        <p class="cell-title"><?php echo htmlspecialchars($ex['judul']); ?></p>
+                                                        <p class="cell-sub"><?php echo htmlspecialchars($ex['subject']); ?> &middot; Token <?php echo htmlspecialchars($ex['token'] ?: '-'); ?></p>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="hide-sm"><?php echo htmlspecialchars($ex['kelas']); ?></td>
+                                            <td class="hide-sm cell-muted"><?php echo (int)$ex['participants']; ?></td>
+                                            <td><span class="status-pill status-<?php echo $st[1]; ?>"><?php echo $st[0]; ?></span></td>
+                                            <td class="hide-sm cell-muted"><?php echo dash_tgl($ex['waktu_mulai']); ?></td>
+                                            <td class="cell-action">
+                                                <a href="monitoring.php?exam_id=<?php echo (int)$ex['id']; ?>" aria-label="Pantau ujian <?php echo htmlspecialchars($ex['judul']); ?>">
+                                                    <i class="fas fa-chevron-right" aria-hidden="true"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <p class="panel-eyebrow">Live</p>
+                            <h2 class="panel-title">Aktivitas Terbaru</h2>
+                        </div>
+                        <a href="profile.php" class="panel-link">Profil</a>
+                    </div>
+                    <ul class="feed">
+                        <?php if (empty($activities)): ?>
+                            <li class="empty-state compact">
+                                <i class="fas fa-wave-square" aria-hidden="true"></i>
+                                <p>Belum ada aktivitas.</p>
+                            </li>
+                        <?php else: ?>
+                            <?php foreach ($activities as $act): ?>
+                                <?php $meta = dash_activity_meta((string)$act['aktivitas']); ?>
+                                <li>
+                                    <span class="feed-icon tint-<?php echo $meta[1]; ?>" aria-hidden="true"><i class="fas <?php echo $meta[0]; ?>"></i></span>
+                                    <div class="feed-body">
+                                        <p><?php echo htmlspecialchars($act['aktivitas']); ?></p>
+                                        <p class="feed-meta"><?php echo htmlspecialchars($act['nama'] ?: 'System'); ?> &middot; <?php echo dash_relatif($act['waktu']); ?></p>
+                                    </div>
+                                </li>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </ul>
+                </article>
+            </section>
+
+            <!-- Announcements -->
+            <section class="panel" aria-label="Pengumuman">
+                <div class="panel-head">
+                    <div>
+                        <p class="panel-eyebrow">Informasi</p>
+                        <h2 class="panel-title">Pengumuman Terbaru</h2>
+                    </div>
+                </div>
+                <?php if (empty($announcements)): ?>
+                    <div class="empty-state">
+                        <i class="fas fa-bullhorn" aria-hidden="true"></i>
+                        <p>Belum ada pengumuman aktif.</p>
+                    </div>
+                <?php else: ?>
+                    <div class="ann-grid">
+                        <?php foreach ($announcements as $ann): ?>
+                            <article class="ann">
+                                <div class="ann-top">
+                                    <span class="ann-icon"><i class="fas fa-bullhorn" aria-hidden="true"></i></span>
+                                    <span class="ann-date"><?php echo dash_tgl($ann['tanggal']); ?></span>
+                                </div>
+                                <h3><?php echo htmlspecialchars($ann['judul']); ?></h3>
+                                <p><?php echo nl2br(htmlspecialchars(mb_strimwidth($ann['pesan'], 0, 160, '...'))); ?></p>
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </section>
+
+            <p class="dash-foot">Data diperbarui otomatis tiap 5 menit &middot; <?php echo getSetting('app_name', 'CBT SMK'); ?></p>
+        </div>
+    </div>
+    </div>
+
+    <script>
+    (function () {
+        if (typeof Chart === 'undefined') return;
+        var TREND = {
+            labels: <?php echo json_encode($labels, JSON_UNESCAPED_UNICODE); ?>,
+            soal: <?php echo json_encode($soalSeries); ?>,
+            hasil: <?php echo json_encode($hasilSeries); ?>
+        };
+        var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        /* Tren: bar soal + line hasil */
+        var trendEl = document.getElementById('trendChart');
+        var trendChart = null;
+        if (trendEl) {
+            trendChart = new Chart(trendEl.getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: TREND.labels.slice(-7),
+                    datasets: [
+                        {
+                            type: 'bar',
+                            label: 'Soal baru',
+                            data: TREND.soal.slice(-7),
+                            backgroundColor: 'rgba(99,102,241,.72)',
+                            hoverBackgroundColor: '#5B5BD6',
+                            borderRadius: 6,
+                            maxBarThickness: 22,
+                            yAxisID: 'y'
+                        },
+                        {
+                            type: 'line',
+                            label: 'Hasil ujian',
+                            data: TREND.hasil.slice(-7),
+                            borderColor: '#10B981',
+                            backgroundColor: 'rgba(16,185,129,.10)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 2,
+                            pointRadius: 2,
+                            pointHoverRadius: 5,
+                            pointBackgroundColor: '#10B981',
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: reduceMotion ? false : { duration: 300 },
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#0F172A',
+                            padding: 10,
+                            cornerRadius: 8,
+                            titleFont: { size: 12, weight: '600' },
+                            bodyFont: { size: 12 },
+                            displayColors: true,
+                            boxPadding: 4
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            border: { display: false },
+                            ticks: { color: '#94A3B8', font: { size: 11 }, maxRotation: 0, autoSkipPadding: 10 }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            border: { display: false },
+                            grid: { color: '#EFF2F7' },
+                            ticks: { color: '#94A3B8', font: { size: 11 }, precision: 0 }
+                        },
+                        y1: {
+                            beginAtZero: true,
+                            position: 'right',
+                            border: { display: false },
+                            grid: { display: false },
+                            ticks: { color: '#94A3B8', font: { size: 11 }, precision: 0 }
+                        }
+                    }
+                }
+            });
+        }
+
+        document.querySelectorAll('.seg-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                document.querySelectorAll('.seg-btn').forEach(function (b) { b.classList.remove('is-active'); });
+                btn.classList.add('is-active');
+                if (!trendChart) return;
+                var n = parseInt(btn.getAttribute('data-period'), 10) || 7;
+                trendChart.data.labels = TREND.labels.slice(-n);
+                trendChart.data.datasets[0].data = TREND.soal.slice(-n);
+                trendChart.data.datasets[1].data = TREND.hasil.slice(-n);
+                trendChart.update();
+            });
+        });
+
+        /* Donut status ujian */
+        var statusEl = document.getElementById('statusChart');
+        if (statusEl) {
+            new Chart(statusEl.getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Aktif', 'Selesai', 'Draft'],
+                    datasets: [{
+                        data: [<?php echo (int)$stats['active_exams']; ?>, <?php echo (int)$stats['completed_exams']; ?>, <?php echo (int)$stats['draft_exams']; ?>],
+                        backgroundColor: <?php echo json_encode($chartColors); ?>,
+                        borderWidth: 0,
+                        hoverOffset: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '72%',
+                    animation: reduceMotion ? false : { duration: 400 },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#0F172A',
+                            padding: 10,
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: function (ctx) {
+                                    var total = ctx.dataset.data.reduce(function (a, b) { return a + b; }, 0);
+                                    var pct = total ? Math.round((ctx.parsed / total) * 100) : 0;
+                                    return ' ' + ctx.label + ': ' + ctx.parsed + ' ujian (' + pct + '%)';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    })();
+
+    /* Dropdown user dari sidebar guru */
+    function toggleUserMenu() {
+        var d = document.getElementById('userDropdown');
+        if (d) d.classList.toggle('hidden');
+    }
+    function toggleNotifications() {
+        var d = document.getElementById('notificationDropdown');
+        if (d) d.classList.toggle('hidden');
+    }
+    </script>
+
+    <!-- Smartsupp Live Chat script -->
+    <script type="text/javascript">
+    var _smartsupp = _smartsupp || {};
+    _smartsupp.key = '<?php echo getSetting('smartsupp_key', '165a218a36ed3f2573a2ad63ac8c36ab3876814f'); ?>';
+    _smartsupp.sitePlatform = "SMK Pasundan 2 Cianjur";
+    _smartsupp.userName = "<?php echo $_SESSION['nama']; ?>";
+    _smartsupp.userEmail = "<?php echo $_SESSION['username'] ?? ''; ?>";
+    _smartsupp.variables = {
+        "role": "<?php echo $_SESSION['role']; ?>",
+        "kelas": "<?php echo $_SESSION['kelas'] ?? ''; ?>"
+    };
+
+    window.smartsupp||(function(d) {
+        var s,c,o=smartsupp=function(){ o._.push(arguments)};o._=[];
+        s=d.getElementsByTagName('script')[0];c=d.createElement('script');
+        c.type='text/javascript';c.charset='utf-8';c.async=true;
+        c.src='https://www.smartsuppchat.com/loader.js?';s.parentNode.insertBefore(c,s);
+    })(document);
+
+    smartsupp('name', "<?php echo $_SESSION['nama']; ?>");
+    </script>
+</body>
+</html>

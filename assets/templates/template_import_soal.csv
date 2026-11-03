@@ -1,0 +1,9 @@
+﻿tipe_soal,soal,pilihan_a,pilihan_b,pilihan_c,pilihan_d,pilihan_e,jawaban_benar,poin_esai,kelas,bobot
+pg,Apa ibukota Indonesia?,Jakarta,Bandung,Surabaya,Medan,Yogyakarta,a,,12-RPL,
+pg,Hasil dari 2 + 3 x 4 adalah ...,20,14,24,10,9,b,,12-RPL,2.5
+pg_kompleks,Pilih pernyataan yang benar tentang fotosintesis:,Menghasilkan oksigen,Terjadi di mitokondria,Membutuhkan cahaya,Menghasilkan karbon dioksida,Terjadi di kloroplas,"a,c,e",,12-RPL,
+pg_kompleks,Pilih bilangan prima berikut:,2,4,7,9,11,"a,c,e",,12-RPL,3
+benar_salah,Jakarta adalah ibukota Indonesia,,,,,,a,,12-RPL,
+benar_salah,Bandung adalah ibukota Indonesia,,,,,,b,,12-RPL,1.5
+esai,Jelaskan perbedaan HTML dan CSS!,,,,,,,10,12-RPL,
+esai,Sebutkan 3 contoh tag HTML beserta fungsinya!,,,,,,,15,12-RPL,5

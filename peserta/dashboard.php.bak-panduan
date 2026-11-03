@@ -1,0 +1,1125 @@
+<?php
+// Enable error logging
+error_reporting(E_ALL);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+
+// Start output buffering to catch any errors
+ob_start();
+
+try {
+    if (!file_exists('../config/config.php')) {
+        throw new Exception("Config file not found");
+    }
+    
+    require_once '../config/config.php';
+    
+    // Check if session is started
+    if (session_status() === PHP_SESSION_NONE) {
+        @session_start();
+    }
+    
+    // Check if user is logged in
+    if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
+        header('Location: ../login.php');
+        exit();
+    }
+    
+    // Check role
+    if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'peserta') {
+        header('Location: ../login.php');
+        exit();
+    }
+
+    $db = new Database();
+    if (!$db) {
+        throw new Exception("Database class not found");
+    }
+    
+    $conn = $db->getConnection();
+    if (!$conn) {
+        throw new Exception("Database connection failed");
+    }
+    
+    // Clear output buffer if everything is OK
+    ob_end_clean();
+    
+} catch (Exception $e) {
+    ob_end_clean();
+    error_log("Dashboard initialization error: " . $e->getMessage());
+    error_log("Stack trace: " . $e->getTraceAsString());
+    error_log("File: " . __FILE__ . " Line: " . __LINE__);
+    http_response_code(500);
+    die("Terjadi kesalahan sistem. Silakan hubungi administrator.");
+}
+
+// Build regex to match any of the participant's classes against exams.kelas (CSV of class IDs)
+$userKelasRaw = isset($_SESSION['kelas']) ? (string)$_SESSION['kelas'] : '';
+$tokens = array_filter(array_map('trim', explode(',', $userKelasRaw)));
+$kelasIds = [];
+$kelasNames = [];
+foreach ($tokens as $t) {
+	if (preg_match('/^\d+$/', $t)) { $kelasIds[] = $t; }
+	else { $kelasNames[] = $t; }
+}
+$kelasRegexId = !empty($kelasIds) ? '(^|,)(' . implode('|', $kelasIds) . ')(,|$)' : '';
+$escapedNames = [];
+foreach ($kelasNames as $n) { if ($n !== '') { $escapedNames[] = preg_quote($n, '/'); } }
+$kelasRegexName = !empty($escapedNames) ? '(^|,)(' . implode('|', $escapedNames) . ')(,|$)' : '';
+
+// Also map names<->ids via classes to maximize compatibility
+try {
+	if (!empty($kelasNames)) {
+		$stmtMap = $conn->prepare("SELECT id FROM classes WHERE nama_kelas IN (" . implode(',', array_fill(0, count($kelasNames), '?')) . ")");
+		$stmtMap->execute($kelasNames);
+		$mappedIds = $stmtMap->fetchAll(PDO::FETCH_COLUMN);
+		if (!empty($mappedIds)) {
+			$kelasIds = array_unique(array_merge($kelasIds, array_map('strval', $mappedIds)));
+			$kelasRegexId = '(^|,)(' . implode('|', $kelasIds) . ')(,|$)';
+		}
+	}
+	if (!empty($kelasIds)) {
+		$stmtMap2 = $conn->prepare("SELECT nama_kelas FROM classes WHERE id IN (" . implode(',', array_fill(0, count($kelasIds), '?')) . ")");
+		$stmtMap2->execute($kelasIds);
+		$mappedNames = $stmtMap2->fetchAll(PDO::FETCH_COLUMN);
+		if (!empty($mappedNames)) {
+			$escaped = [];
+			foreach ($mappedNames as $mn) { $escaped[] = preg_quote($mn, '/'); }
+			$kelasRegexName = '(^|,)(' . implode('|', $escaped) . ')(,|$)';
+		}
+	}
+} catch (Exception $e) {
+	error_log("Error mapping kelas: " . $e->getMessage());
+	// Continue with empty arrays if mapping fails
+}
+
+// Build WHERE clause snippet and params for class matching (IDs or Names)
+$kelasWhere = '';
+$kelasParams = [];
+if ($kelasRegexId && $kelasRegexName) {
+	$kelasWhere = "(e.kelas REGEXP ? OR e.kelas REGEXP ?)";
+	$kelasParams = [$kelasRegexId, $kelasRegexName];
+} elseif ($kelasRegexId) {
+	$kelasWhere = "(e.kelas REGEXP ?)";
+	$kelasParams = [$kelasRegexId];
+} elseif ($kelasRegexName) {
+	$kelasWhere = "(e.kelas REGEXP ?)";
+	$kelasParams = [$kelasRegexName];
+} else {
+	$kelasWhere = "(1=0)"; // no classes
+}
+
+// Fetch class map id => nama_kelas for rendering names
+$classMap = [];
+try {
+	$stmtClass = $conn->prepare("SELECT id, nama_kelas FROM classes");
+	$stmtClass->execute();
+	while ($row = $stmtClass->fetch(PDO::FETCH_ASSOC)) {
+		$classMap[(string)$row['id']] = $row['nama_kelas'];
+	}
+} catch (Exception $e) {
+	error_log("Error fetching class map: " . $e->getMessage());
+	// Continue with empty classMap if fetch fails
+}
+
+// Helper to convert CSV of IDs to CSV of names
+function renderClassNames($csvIds, $classMap) {
+	$ids = array_filter(array_map('trim', explode(',', (string)$csvIds)));
+	$names = [];
+	foreach ($ids as $id) {
+		if (isset($classMap[$id])) {
+			$names[] = $classMap[$id];
+		}
+	}
+	return !empty($names) ? htmlspecialchars(implode(', ', $names)) : htmlspecialchars((string)$csvIds);
+}
+
+// Get active exams (currently available) for student's class
+$active_exams = [];
+try {
+    $query = "SELECT e.*, s.nama as subject_name, COALESCE(u.nama, 'Tidak Diketahui') as guru_name 
+              FROM exams e 
+              JOIN subjects s ON e.subject_id = s.id 
+              LEFT JOIN users u ON s.guru_id = u.id 
+              WHERE $kelasWhere AND e.status = 'aktif' 
+              AND e.waktu_mulai <= NOW() AND e.waktu_selesai >= NOW()
+              ORDER BY e.waktu_mulai ASC";
+    $stmt = $conn->prepare($query);
+    if ($stmt) {
+        $stmt->execute($kelasParams);
+        $active_exams = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+} catch (PDOException $e) {
+    error_log("Error fetching active exams: " . $e->getMessage());
+    error_log("Query: " . $query);
+    error_log("Params: " . print_r($kelasParams, true));
+    $active_exams = [];
+} catch (Exception $e) {
+    error_log("Error fetching active exams: " . $e->getMessage());
+    $active_exams = [];
+}
+
+// Get upcoming exams for student's class
+$upcoming_exams = [];
+try {
+    $query = "SELECT e.*, s.nama as subject_name, COALESCE(u.nama, 'Tidak Diketahui') as guru_name 
+              FROM exams e 
+              JOIN subjects s ON e.subject_id = s.id 
+              LEFT JOIN users u ON s.guru_id = u.id 
+              WHERE $kelasWhere AND e.status = 'aktif' 
+              AND e.waktu_mulai > NOW()
+              ORDER BY e.waktu_mulai ASC";
+    $stmt = $conn->prepare($query);
+    if ($stmt) {
+        $stmt->execute($kelasParams);
+        $upcoming_exams = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+} catch (PDOException $e) {
+    error_log("Error fetching upcoming exams: " . $e->getMessage());
+    error_log("Query: " . $query);
+    $upcoming_exams = [];
+} catch (Exception $e) {
+    error_log("Error fetching upcoming exams: " . $e->getMessage());
+    $upcoming_exams = [];
+}
+
+// Get student's exam history
+$exam_history = [];
+try {
+    $query = "SELECT er.*, e.judul, s.nama as subject_name 
+              FROM exam_results er 
+              JOIN exams e ON er.exam_id = e.id 
+              JOIN subjects s ON e.subject_id = s.id 
+              WHERE er.user_id = ? 
+              ORDER BY er.created_at DESC";
+    $stmt = $conn->prepare($query);
+    $stmt->execute([$_SESSION['user_id']]);
+    $exam_history = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    error_log("Error fetching exam history: " . $e->getMessage());
+    $exam_history = [];
+}
+
+// Get completed exams (past exams that are no longer active)
+$completed_exams = [];
+try {
+    $query = "SELECT e.*, s.nama as subject_name, COALESCE(u.nama, 'Tidak Diketahui') as guru_name, 
+              CASE WHEN er.id IS NOT NULL THEN 1 ELSE 0 END as has_taken
+              FROM exams e 
+              JOIN subjects s ON e.subject_id = s.id 
+              LEFT JOIN users u ON s.guru_id = u.id 
+              LEFT JOIN exam_results er ON e.id = er.exam_id AND er.user_id = ?
+              WHERE $kelasWhere AND e.waktu_selesai < NOW()
+              ORDER BY e.waktu_selesai DESC";
+    $stmt = $conn->prepare($query);
+    if ($stmt) {
+        $stmt->execute(array_merge([$_SESSION['user_id']], $kelasParams));
+        $completed_exams = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+} catch (PDOException $e) {
+    error_log("Error fetching completed exams: " . $e->getMessage());
+    error_log("Query: " . $query);
+    $completed_exams = [];
+} catch (Exception $e) {
+    error_log("Error fetching completed exams: " . $e->getMessage());
+    $completed_exams = [];
+}
+
+// Get announcements for students
+$announcements = [];
+try {
+    $query = "SELECT a.*, u.nama as pengirim_name FROM announcements a 
+              LEFT JOIN users u ON a.pengirim = u.id
+              WHERE (a.target_role = 'peserta' OR a.target_role IS NULL) 
+              AND a.is_active = 1 
+              ORDER BY a.tanggal DESC LIMIT 5";
+    $stmt = $conn->prepare($query);
+    $stmt->execute();
+    $announcements = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    error_log("Error fetching announcements: " . $e->getMessage());
+    $announcements = [];
+}
+?>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Siswa - <?php echo getSetting('app_name', 'CBT SMK'); ?></title>
+    <link rel="icon" type="image/x-icon" href="../<?php echo getSetting('app_favicon', 'assets/img/favicon.ico'); ?>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="../assets/css/mobile-menu.css" rel="stylesheet">
+    <link href="../assets/css/admin-style.css?v=20261101a" rel="stylesheet">
+    <link href="../assets/css/table-style.css" rel="stylesheet">
+    <link href="../assets/css/ui-components.css" rel="stylesheet">
+    <script src="../assets/js/mobile-menu.js" defer></script>
+    <script src="../assets/js/admin-script.js" defer></script>
+    <script src="../assets/js/table-script.js" defer></script>
+</head>
+<body class="bg-gray-50 overflow-x-hidden">
+    <!-- Announcements Popup -->
+    <div id="announcementModal" class="hidden fixed inset-0 bg-gray-600/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-auto my-4 p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4 sticky top-0 bg-white z-10 py-2">
+                <h3 class="text-lg sm:text-xl font-bold text-gray-900">📢 Pengumuman Terbaru</h3>
+            </div>
+            <div class="space-y-4 overflow-y-auto">
+                <?php foreach ($announcements as $announcement): ?>
+                <div class="bg-blue-50 p-4 rounded-lg">
+                    <h4 class="font-semibold text-blue-800 text-lg"><?php echo htmlspecialchars($announcement['judul']); ?></h4>
+                    <p class="text-gray-700 mt-2"><?php echo nl2br(htmlspecialchars($announcement['pesan'])); ?></p>
+                    <div class="mt-3 text-sm text-blue-600">
+                        <i class="fas fa-user mr-2"></i>
+                        <?php echo htmlspecialchars($announcement['pengirim_name']); ?>
+                        <i class="fas fa-clock mr-2"></i>
+                        <?php echo date('d/m/Y H:i', strtotime($announcement['tanggal'])); ?>                        
+                    </div>
+                </div>
+                <?php endforeach; ?>
+            </div>
+            <div class="mt-6 flex justify-end border-t pt-4">
+                <button onclick="closeAnnouncement()" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-6 rounded-lg transition-colors duration-200 flex items-center">
+                    <i class="fas fa-check mr-2"></i>
+                    Saya Sudah Baca
+                </button>
+            </div>
+        </div>
+    </div>
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <!-- Mobile menu toggle -->
+                    <button id="mobileMenuToggle" class="mobile-menu-toggle">
+                        <i class="fas fa-bars text-xl"></i>
+                    </button>
+                    <img src="../<?php echo getSetting('app_logo', 'assets/img/logo.png'); ?>" alt="Logo" class="h-8 w-8 mr-3">
+                    <a href="dashboard.php"><span class="font-semibold text-gray-900"><?php echo getSetting('app_name', 'CBT SMK'); ?></span></a>
+                </div>
+                
+                <div class="flex items-center space-x-4">
+                    <div class="relative">
+                        <button onclick="toggleUserMenu()" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900">
+                            <?php if(isset($_SESSION['photo']) && !empty($_SESSION['photo'])): ?>
+                            <img src="../<?php echo $_SESSION['photo']; ?>" alt="Profile" class="h-8 w-8 rounded-full object-cover">
+                            <?php else: ?>
+                            <i class="fas fa-user-circle text-2xl"></i>
+                            <?php endif; ?>
+                            <span class="hidden md:inline"><?php echo $_SESSION['nama']; ?></span>
+                            <i class="fas fa-chevron-down text-sm"></i>
+                        </button>
+                        
+                        <div id="userDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50">
+                            <a href="profile.php" class="block px-4 py-2 text-gray-800 hover:bg-gray-50">
+                                <i class="fas fa-user mr-2"></i>Profil
+                            </a>
+                            <hr class="my-1">
+                            <a href="../logout.php" class="block px-4 py-2 text-red-600 hover:bg-red-50">
+                                <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobileMenuOverlay" class="mobile-menu-overlay"></div>
+    
+    <!-- Mobile Menu -->
+    <div id="mobileMenu" class="mobile-menu">
+        <div class="p-4 border-b flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-900">Menu Siswa</h2>
+            <button id="mobileMenuClose" class="text-gray-500 hover:text-gray-700">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        <div class="p-4">
+            <nav class="space-y-2">
+                <a href="changelog.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                        <i class="fas fa-history mr-3"></i>Changelog
+                </a>
+                <a href="dashboard.php" class="flex items-center px-4 py-2 text-blue-600 bg-blue-50 rounded-lg">
+                    <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+                </a>
+                <a href="results.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                    <i class="fas fa-history mr-3"></i>Riwayat Ujian
+                </a>
+                <a href="tickets.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+                </a>
+                <a href="report.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                 <i class="fas fa-bug mr-3"></i>Saran dan Report Bug
+                </a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="flex">
+        <!-- Desktop Sidebar -->
+        <div class="w-64 bg-white shadow-lg min-h-screen desktop-sidebar">
+            <div class="p-4">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Menu Siswa</h2>
+                <nav class="space-y-2">
+                    <a href="changelog.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                        <i class="fas fa-history mr-3"></i>Changelog
+                    </a>
+                    <a href="dashboard.php" class="flex items-center px-4 py-2 text-blue-600 bg-blue-50 rounded-lg">
+                        <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+                    </a>
+                    <a href="results.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                        <i class="fas fa-history mr-3"></i>Riwayat Ujian
+                    </a>
+                    <a href="tickets.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                        <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+                    </a>                    
+                    <a href="report.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                        <i class="fas fa-bug mr-3"></i>Saran dan Report Bug
+                    </a>
+                </nav>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="flex-1 p-4 md:p-6 main-content w-full overflow-x-hidden">
+            <!-- Welcome Section -->
+            <div class="mb-8">
+                <h1 class="text-2xl md:text-3xl font-bold text-gray-900 break-words">Dashboard Peserta Ujian</h1>
+               <h1 class="text-xl md:text-2xl font-bold text-gray-900 break-words">
+                Selamat Datang dan <span id="timeOfDayMessage"></span> <?php echo $_SESSION['nama']; ?>!
+                </h1>
+                <p class="text-gray-600 break-words">Kelas <?php echo renderClassNames($_SESSION['kelas'], $classMap); ?> - Sistem Ujian <?php echo getSetting('app_name', 'CBT SMK'); ?></p>
+            </div>
+
+        <!-- Announcements -->
+         <?php if (!empty($announcements)): ?>
+         <div class="bg-gradient-to-br from-white to-blue-50 rounded-2xl shadow-xl p-4 md:p-8 mb-8 border border-blue-100 relative overflow-hidden">
+             <!-- Background Pattern -->
+             <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-amber-200/20 to-yellow-200/20 rounded-full -translate-y-16 translate-x-16"></div>
+             <div class="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-blue-200/20 to-indigo-200/20 rounded-full translate-y-12 -translate-x-12"></div>
+             
+             <div class="relative z-10">
+                 <div class="flex flex-wrap items-center mb-6">
+                     <div class="bg-gradient-to-r from-amber-500 to-yellow-500 p-3 rounded-xl mr-4 shadow-lg">
+                         <i class="fas fa-bullhorn text-white text-xl"></i>
+                     </div>
+                     <div>
+                         <h2 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-amber-600 to-yellow-600 bg-clip-text text-transparent break-words">
+                             Pengumuman Terbaru
+                         </h2>
+                         <p class="text-gray-600 text-sm break-words">Informasi penting dari Pengawas dan guru</p>
+                     </div>
+                 </div>
+                 
+                 <div class="space-y-6">
+                     <?php foreach ($announcements as $index => $announcement): ?>
+                     <div class="bg-white/80 backdrop-blur-sm border border-amber-200 rounded-xl p-4 md:p-6 shadow-lg hover:shadow-xl transition-all duration-300 group relative overflow-hidden">
+                         <!-- Shimmer Effect -->
+                         <div class="absolute inset-0 bg-gradient-to-r from-transparent via-amber-100/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
+                         
+                         <div class="relative z-10">
+                             <div class="flex flex-col md:flex-row items-start justify-between mb-4">
+                                 <div class="flex-1">
+                                     <h3 class="text-lg md:text-xl font-bold text-gray-900 mb-2 group-hover:text-amber-700 transition-colors break-words">
+                                         <?php echo htmlspecialchars($announcement['judul']); ?>
+                                     </h3>
+                                     <p class="text-gray-700 leading-relaxed break-words"><?php echo nl2br(htmlspecialchars($announcement['pesan'])); ?></p>
+                                 </div>
+                                 
+                                 <!-- Priority Badge -->
+                                 <?php if ($index === 0): ?>
+                                 <div class="bg-gradient-to-r from-red-500 to-pink-500 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center ml-0 md:ml-4 mt-2 md:mt-0">
+                                     <i class="fas fa-star mr-1"></i>
+                                     PENTING
+                                 </div>
+                                 <?php endif; ?>
+                             </div>
+                             
+                             <div class="flex flex-col md:flex-row flex-wrap items-start md:items-center justify-between gap-4">
+                                 <div class="flex items-center space-x-4">
+                                     <div class="flex items-center bg-amber-100 text-amber-800 px-3 py-2 rounded-full text-sm font-medium">
+                                         <i class="fas fa-user mr-2"></i>
+                                         <?php echo htmlspecialchars($announcement['pengirim_name']); ?>
+                                     </div>
+                                     <div class="flex items-center bg-blue-100 text-blue-800 px-3 py-2 rounded-full text-sm font-medium">
+                                         <i class="fas fa-clock mr-2"></i>
+                                         <?php echo date('d/m/Y H:i', strtotime($announcement['tanggal'])); ?>
+                                     </div>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+                     <?php endforeach; ?>
+                 </div>
+             </div>
+         </div>
+         <?php endif; ?>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <!-- Upcoming Exams -->
+            <div class="xl:col-span-2">
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                    <i class="fas fa-calendar-alt mr-2 text-purple-600"></i>Ujian yang Akan Datang
+                </h2>
+                
+                <?php if (empty($upcoming_exams)): ?>
+                <div class="bg-white rounded-lg shadow p-6 text-center mb-8">
+                    <i class="fas fa-calendar-day text-4xl text-gray-400 mb-4"></i>
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Tidak Ada Ujian yang Akan Datang</h3>
+                    <p class="text-gray-600">Belum ada jadwal ujian mendatang untuk kelas Anda.</p>
+                </div>
+                <?php else: ?>
+                <div class="space-y-6 mb-8">
+                    <?php foreach ($upcoming_exams as $exam): ?>
+                    <div class="bg-gradient-to-br from-white to-purple-50 rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-500 overflow-hidden border border-purple-100 group relative">
+                        <!-- Background Pattern -->
+                        <div class="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-purple-200/20 to-indigo-200/20 rounded-full -translate-y-20 translate-x-20 group-hover:scale-110 transition-transform duration-500"></div>
+                        
+                        <div class="relative z-10">
+                            <div class="border-b border-purple-100 bg-gradient-to-r from-purple-50 to-indigo-50 px-4 md:px-8 py-6">
+                                <div class="flex flex-col md:flex-row justify-between items-start md:items-center">
+                                    <div class="flex items-center space-x-4 mb-4 md:mb-0">
+                                        <div class="bg-gradient-to-r from-purple-500 to-indigo-500 p-3 rounded-xl shadow-lg">
+                                            <i class="fas fa-calendar-alt text-white text-xl"></i>
+                                        </div>
+                                        <div>
+                                            <h3 class="text-xl md:text-2xl font-bold text-gray-900 group-hover:text-purple-700 transition-colors break-words">
+                                                <?php echo htmlspecialchars($exam['judul']); ?>
+                                            </h3>
+                                            <p class="text-purple-700 font-medium text-lg break-words"><?php echo htmlspecialchars($exam['subject_name']); ?></p>
+                                        </div>
+                                    </div>
+                                    <span class="px-6 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-sm rounded-full font-bold flex items-center shadow-lg self-start md:self-center">
+                                        <i class="fas fa-clock mr-2"></i>
+                                        Akan Datang
+                                    </span>
+                                </div>
+                            </div>
+                        
+                            <div class="p-4 md:p-8">
+                                <div class="flex items-center mb-6">
+                                    <div class="bg-gradient-to-r from-purple-100 to-indigo-100 p-3 rounded-xl mr-4">
+                                        <i class="fas fa-chalkboard-teacher text-purple-600 text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm text-gray-600">Dibuat oleh</p>
+                                        <p class="text-lg font-bold text-gray-900 break-words"><?php echo htmlspecialchars($exam['guru_name']); ?></p>
+                                    </div>
+                                </div>
+                                
+                                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                                    <div class="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl border border-blue-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-blue-500 to-blue-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-clock text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-blue-600 font-medium">Durasi Ujian</p>
+                                            <p class="text-xl font-bold text-blue-900"><?php echo $exam['durasi']; ?> menit</p>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-xl border border-purple-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-purple-500 to-purple-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-users text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-purple-600 font-medium">Kelas</p>
+                                            <p class="text-xl font-bold text-purple-900"><?php echo renderClassNames($exam['kelas'], $classMap); ?></p>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-xl border border-green-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-green-500 to-green-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-play text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-green-600 font-medium">Waktu Mulai</p>
+                                            <p class="text-lg font-bold text-green-900 break-words"><?php 
+                                                $waktu_mulai = new DateTime($exam['waktu_mulai']);
+                                                $waktu_mulai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                                echo $waktu_mulai->format('d/m/Y H:i'); 
+                                            ?></p>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gradient-to-br from-red-50 to-red-100 p-4 rounded-xl border border-red-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-red-500 to-red-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-stop text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-red-600 font-medium">Waktu Selesai</p>
+                                            <p class="text-lg font-bold text-red-900 break-words"><?php 
+                                                $waktu_selesai = new DateTime($exam['waktu_selesai']);
+                                                $waktu_selesai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                                echo $waktu_selesai->format('d/m/Y H:i'); 
+                                            ?></p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-gradient-to-r from-purple-100 to-indigo-100 p-6 rounded-xl border border-purple-200 flex flex-wrap items-center group hover:shadow-lg transition-all duration-300">
+                                    <div class="bg-gradient-to-r from-purple-500 to-indigo-500 p-4 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                        <i class="fas fa-calendar-check text-white text-xl"></i>
+                                    </div>
+                                    <div class="flex-1">
+                                        <p class="text-purple-900 font-bold text-lg">Ujian akan tersedia pada:</p>
+                                        <p class="text-purple-800 text-xl font-semibold break-words"><?php 
+                                            $waktu_mulai = new DateTime($exam['waktu_mulai']);
+                                            $waktu_mulai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                            echo $waktu_mulai->format('d/m/Y H:i'); 
+                                        ?></p>
+                                    </div>
+                                    <div class="bg-white/50 px-4 py-2 rounded-lg mt-2 md:mt-0">
+                                        <i class="fas fa-hourglass-half text-purple-600 mr-2"></i>
+                                        <span class="text-purple-800 font-medium">Menunggu</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+                
+                <!-- Active Exams -->
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                    <i class="fas fa-clipboard-list mr-2 text-green-600"></i>Ujian Tersedia
+                </h2>
+                
+                <?php if (empty($active_exams)): ?>
+                <div class="bg-white rounded-lg shadow p-6 text-center mb-8">
+                    <i class="fas fa-calendar-times text-4xl text-gray-400 mb-4"></i>
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Tidak Ada Ujian</h3>
+                    <p class="text-gray-600">Saat ini tidak ada ujian yang tersedia untuk kelas Anda.</p>
+                </div>
+                <?php else: ?>
+                <div class="space-y-6 mb-8">
+                    <?php foreach ($active_exams as $exam): ?>
+                    <div class="bg-gradient-to-br from-white to-green-50 rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-500 overflow-hidden border border-green-100 group relative">
+                        <!-- Background Pattern -->
+                        <div class="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-green-200/20 to-emerald-200/20 rounded-full -translate-y-20 translate-x-20 group-hover:scale-110 transition-transform duration-500"></div>
+                        
+                        <div class="relative z-10">
+                            <div class="border-b border-green-100 bg-gradient-to-r from-green-50 to-emerald-50 px-4 md:px-8 py-6">
+                                <div class="flex flex-col md:flex-row justify-between items-start md:items-center">
+                                    <div class="flex items-center space-x-4 mb-4 md:mb-0">
+                                        <div class="bg-gradient-to-r from-green-500 to-emerald-500 p-3 rounded-xl shadow-lg">
+                                            <i class="fas fa-play-circle text-white text-xl"></i>
+                                        </div>
+                                        <div>
+                                            <h3 class="text-xl md:text-2xl font-bold text-gray-900 group-hover:text-green-700 transition-colors break-words">
+                                                <?php echo htmlspecialchars($exam['judul']); ?>
+                                            </h3>
+                                            <p class="text-green-700 font-medium text-lg break-words"><?php echo htmlspecialchars($exam['subject_name']); ?></p>
+                                        </div>
+                                    </div>
+                                    <span class="px-6 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white text-sm rounded-full font-bold flex items-center shadow-lg self-start md:self-center">
+                                        <span class="w-2 h-2 bg-white rounded-full mr-2 animate-pulse"></span>
+                                        Sedang Aktif
+                                    </span>
+                                </div>
+                            </div>
+                        
+                            <div class="p-4 md:p-8">
+                                <div class="flex items-center mb-6">
+                                    <div class="bg-gradient-to-r from-green-100 to-emerald-100 p-3 rounded-xl mr-4">
+                                        <i class="fas fa-chalkboard-teacher text-green-600 text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm text-gray-600">Dibuat oleh</p>
+                                        <p class="text-lg font-bold text-gray-900 break-words"><?php echo htmlspecialchars($exam['guru_name']); ?></p>
+                                    </div>
+                                </div>
+                                
+                                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                                    <div class="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-xl border border-blue-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-blue-500 to-blue-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-clock text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-blue-600 font-medium">Durasi Ujian</p>
+                                            <p class="text-xl font-bold text-blue-900"><?php echo $exam['durasi']; ?> menit</p>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-xl border border-purple-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-purple-500 to-purple-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-users text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-purple-600 font-medium">Kelas</p>
+                                            <p class="text-xl font-bold text-purple-900"><?php echo renderClassNames($exam['kelas'], $classMap); ?></p>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-xl border border-green-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-green-500 to-green-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-play text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-green-600 font-medium">Waktu Mulai</p>
+                                            <p class="text-lg font-bold text-green-900 break-words"><?php 
+                                                $waktu_mulai = new DateTime($exam['waktu_mulai']);
+                                                $waktu_mulai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                                echo $waktu_mulai->format('d/m/Y H:i'); 
+                                            ?></p>
+                                        </div>
+                                    </div>
+                                    <div class="bg-gradient-to-br from-red-50 to-red-100 p-4 rounded-xl border border-red-200 flex items-center group hover:shadow-lg transition-all duration-300">
+                                        <div class="bg-gradient-to-r from-red-500 to-red-600 p-3 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                            <i class="fas fa-stop text-white text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-sm text-red-600 font-medium">Waktu Selesai</p>
+                                            <p class="text-lg font-bold text-red-900 break-words"><?php 
+                                                $waktu_selesai = new DateTime($exam['waktu_selesai']);
+                                                $waktu_selesai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                                echo $waktu_selesai->format('d/m/Y H:i'); 
+                                            ?></p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <?php
+                                // Check if student has already taken this exam
+                                $check_query = "SELECT * FROM exam_results WHERE user_id = ? AND exam_id = ?";
+                                $check_stmt = $conn->prepare($check_query);
+                                $check_stmt->execute([$_SESSION['user_id'], $exam['id']]);
+                                $has_taken = $check_stmt->fetch(PDO::FETCH_ASSOC);
+                                ?>
+                                
+                                <?php if ($has_taken): ?>
+                                <div class="bg-gradient-to-r from-green-100 to-emerald-100 p-6 rounded-xl border border-green-200 flex flex-wrap items-center group hover:shadow-lg transition-all duration-300">
+                                    <div class="bg-gradient-to-r from-green-500 to-emerald-500 p-4 rounded-xl mr-4 group-hover:scale-110 transition-transform duration-300">
+                                        <i class="fas fa-check-circle text-white text-xl"></i>
+                                    </div>
+                                    <div class="flex-1">
+                                        <p class="text-green-900 font-bold text-lg">Ujian sudah dikerjakan</p>
+                                        <p class="text-green-800 break-words">Selesai pada <?php echo date('d/m/Y H:i', strtotime($has_taken['waktu_selesai'])); ?></p>
+                                    </div>
+                                    <div class="bg-white/50 px-4 py-2 rounded-lg mt-2 md:mt-0">
+                                        <i class="fas fa-check text-green-600 mr-2"></i>
+                                        <span class="text-green-800 font-medium">Selesai</span>
+                                    </div>
+                                </div>
+                                <?php else: ?>
+                                <button onclick="startExam(<?php echo $exam['id']; ?>, '<?php echo htmlspecialchars($exam['judul']); ?>')" 
+                                        class="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold py-4 px-8 rounded-xl transition-all duration-300 shadow-xl hover:shadow-2xl transform hover:scale-105 flex items-center justify-center text-lg">
+                                    <i class="fas fa-play mr-3 text-xl"></i>
+                                    Mulai Ujian Sekarang
+                                </button>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+                
+                <!-- Completed Exams -->
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                    <i class="fas fa-check-circle mr-2 text-blue-600"></i>Ujian yang Sudah Selesai
+                </h2>
+                
+                <?php if (empty($completed_exams)): ?>
+                <div class="bg-white rounded-lg shadow p-6 text-center mb-8">
+                    <i class="fas fa-clipboard-check text-4xl text-gray-400 mb-4"></i>
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Tidak Ada Ujian yang Sudah Selesai</h3>
+                    <p class="text-gray-600">Belum ada ujian yang sudah selesai untuk kelas Anda.</p>
+                </div>
+                <?php else: ?>
+                <div class="space-y-6 mb-8">
+                    <?php foreach ($completed_exams as $exam): ?>
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-gray-100">
+                        <div class="border-b border-gray-100 bg-gradient-to-r from-green-50 to-teal-50 px-6 py-4">
+                            <div class="flex flex-wrap justify-between items-center">
+                                <div>
+                                    <h3 class="text-xl font-bold text-gray-900 break-words"><?php echo htmlspecialchars($exam['judul']); ?></h3>
+                                    <p class="text-teal-700 font-medium break-words"><?php echo htmlspecialchars($exam['subject_name']); ?></p>
+                                </div>
+                                <span class="px-4 py-1.5 bg-green-100 text-green-800 text-sm rounded-full font-medium flex items-center mt-2 md:mt-0">
+                                    <i class="fas fa-check-circle mr-2"></i>
+                                    Selesai
+                                </span>
+                            </div>
+                        </div>
+                        
+                        <div class="p-6">
+                            <div class="flex items-center mb-4">
+                                <span class="text-gray-700 break-words">Guru: <span class="font-medium"><?php echo htmlspecialchars($exam['guru_name']); ?></span></span>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                                <div class="bg-gray-50 p-3 rounded-lg flex items-center">
+                                    <div class="bg-blue-100 p-2 rounded-lg mr-3">
+                                        <i class="fas fa-clock text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-gray-500">Durasi</p>
+                                        <p class="font-medium"><?php echo $exam['durasi']; ?> menit</p>
+                                    </div>
+                                </div>
+                                <div class="bg-gray-50 p-3 rounded-lg flex items-center">
+                                    <div class="bg-teal-100 p-2 rounded-lg mr-3">
+                                        <i class="fas fa-users text-teal-600"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-gray-500">Kelas</p>
+                                        <p class="font-medium"><?php echo renderClassNames($exam['kelas'], $classMap); ?></p>
+                                    </div>
+                                </div>
+                                <div class="bg-gray-50 p-3 rounded-lg flex items-center">
+                                    <div class="bg-green-100 p-2 rounded-lg mr-3">
+                                        <i class="fas fa-play text-green-600"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-gray-500">Mulai</p>
+                                        <p class="font-medium break-words"><?php 
+                                            $waktu_mulai = new DateTime($exam['waktu_mulai']);
+                                            $waktu_mulai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                            echo $waktu_mulai->format('d/m/Y H:i'); 
+                                        ?></p>
+                                    </div>
+                                </div>
+                                <div class="bg-gray-50 p-3 rounded-lg flex items-center">
+                                    <div class="bg-red-100 p-2 rounded-lg mr-3">
+                                        <i class="fas fa-stop text-red-600"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-gray-500">Selesai</p>
+                                        <p class="font-medium break-words"><?php 
+                                            $waktu_selesai = new DateTime($exam['waktu_selesai']);
+                                            $waktu_selesai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                            echo $waktu_selesai->format('d/m/Y H:i'); 
+                                        ?></p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <?php if ($exam['has_taken']): ?>
+                            <div class="flex flex-wrap justify-between items-center">
+                                <div class="bg-green-100 p-3 rounded-lg mb-2 md:mb-0">
+                                    <p class="text-green-800 text-sm">
+                                        <i class="fas fa-check-circle text-green-600 mr-2"></i>
+                                        Ujian sudah dikerjakan
+                                    </p>
+                                </div>
+                                <a href="results.php?exam_id=<?php echo $exam['id']; ?>" class="px-5 py-2.5 bg-gradient-to-r from-teal-500 to-green-500 text-white rounded-lg hover:from-teal-600 hover:to-green-600 transition duration-300 shadow-md hover:shadow-lg flex items-center font-medium">
+                                    <i class="fas fa-eye mr-2"></i>Lihat Hasil
+                                </a>
+                            </div>
+                            <?php else: ?>
+                            <div class="bg-yellow-100 p-3 rounded-lg">
+                                <p class="text-yellow-800 text-sm">
+                                    <i class="fas fa-exclamation-circle text-yellow-600 mr-2"></i>
+                                    Ujian tidak dikerjakan
+                                </p>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Exam History -->
+            <div>
+                <h2 class="text-xl font-semibold text-gray-900 mb-4">
+                    <i class="fas fa-history mr-2 text-purple-600"></i>Riwayat Ujian
+                </h2>
+                
+                <div class="bg-white rounded-lg shadow">
+                    <?php if (empty($exam_history)): ?>
+                    <div class="p-6 text-center">
+                        <i class="fas fa-clipboard text-3xl text-gray-400 mb-3"></i>
+                        <p class="text-gray-600">Belum ada riwayat ujian</p>
+                    </div>
+                    <?php else: ?>
+                <div class="divide-y divide-gray-200">
+                        <?php foreach ($exam_history as $history): ?>
+                        <div class="p-4 hover:bg-blue-50 transition-all duration-200">
+                            <h4 class="font-medium text-gray-900 break-words"><?php echo htmlspecialchars($history['judul']); ?></h4>
+                            <p class="text-sm text-indigo-600 break-words"><?php echo htmlspecialchars($history['subject_name']); ?></p>
+                            <div class="mt-2 flex justify-between items-center">
+                                <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                    <i class="fas fa-calendar-alt mr-1"></i><?php echo date('d/m/Y', strtotime($history['created_at'])); ?>
+                                </span>
+                                <a href="results.php?exam_id=<?php echo $history['exam_id']; ?>" class="text-blue-600 hover:text-blue-800 text-xs bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-lg transition-all duration-200">
+                                    <i class="fas fa-eye mr-1"></i>Lihat Detail
+                                </a>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Token Input Modal -->
+    <div id="tokenModal" class="hidden fixed inset-0 bg-black/90 overflow-y-auto h-full w-full z-50 backdrop-blur-sm transition-all duration-300">
+        <div class="relative min-h-screen md:min-h-0 flex items-center justify-center p-4">
+            <div class="w-full max-w-lg bg-gradient-to-br from-white to-blue-50 rounded-2xl shadow-2xl transform transition-all duration-300">
+                <!-- Header -->
+                <div class="relative bg-gradient-to-r from-blue-600 to-indigo-700 rounded-t-2xl p-6 pb-8 text-center">
+                    <div class="absolute top-3 right-3">
+                        <button onclick="closeTokenModal()" class="text-white/80 hover:text-white transition-colors">
+                            <i class="fas fa-times text-xl"></i>
+                        </button>
+                    </div>
+                    <div class="bg-white/10 w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center">
+                        <i class="fas fa-key text-white text-3xl"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold text-white mb-2">Token Ujian</h3>
+                    <p class="text-blue-100 text-sm max-w-md mx-auto" id="examTitle"></p>
+                </div>
+
+                <!-- Body -->
+                <div class="p-6 md:p-8">
+                    <form id="tokenForm" class="space-y-6">
+                        <input type="hidden" id="examId" name="exam_id">
+                        
+                        <div class="space-y-4">
+                            <!-- Token Input -->
+                            <div class="relative">
+                                <div class="flex justify-center mb-4">
+                                    <input type="text" 
+                                           id="examToken" 
+                                           name="token" 
+                                           class="text-center text-4xl font-mono w-full max-w-[200px] py-4 px-2 rounded-xl border-2 border-gray-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 transition-all bg-white text-gray-900" 
+                                           placeholder="XXXXXX"
+                                           maxlength="6"
+                                           autocomplete="off"
+                                           style="letter-spacing: 8px;"
+                                           required>
+                                </div>
+                                <p class="text-center text-gray-500 text-sm">Masukkan token yang diberikan oleh pengawas</p>
+                            </div>
+
+                            <!-- Rules -->
+                            <div class="bg-blue-50/50 backdrop-blur-sm rounded-xl p-4 border border-blue-100">
+                                <h4 class="font-semibold text-blue-900 mb-3 flex items-center">
+                                    <i class="fas fa-clipboard-list text-blue-500 mr-2"></i>
+                                    Peraturan Ujian
+                                </h4>
+                                <div class="space-y-2 text-sm text-gray-600">
+                                    <?php 
+                                    $rules = explode("\n", getSetting('exam_regulations', "1. Peserta dilarang mencontek\n2. Peserta dilarang membawa alat komunikasi\n3. Peserta dilarang meninggalkan ruangan ujian tanpa izin pengawas\n4. Peserta wajib menjaga ketertiban"));
+                                    foreach($rules as $rule): 
+                                    ?>
+                                    <div class="flex items-start">
+                                        <i class="fas fa-check text-green-500 mt-1 mr-2 flex-shrink-0"></i>
+                                        <span><?php echo htmlspecialchars($rule); ?></span>
+                                    </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="flex flex-col sm:flex-row justify-center gap-3 pt-4">
+                            <button type="button" onclick="closeTokenModal()" 
+                                    class="w-full sm:w-auto px-6 py-3 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl transition-all duration-300 font-medium flex items-center justify-center">
+                                <i class="fas fa-times mr-2"></i>Batal
+                            </button>
+                            <button type="submit" 
+                                    class="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl transition-all duration-300 font-medium flex items-center justify-center shadow-lg hover:shadow-blue-500/25">
+                                <i class="fas fa-play mr-2"></i>Mulai Ujian
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Fungsi untuk menampilkan dropdown notifikasi
+        function toggleNotificationDropdown() {
+            const dropdown = document.getElementById('notificationDropdown');
+            dropdown.classList.toggle('hidden');
+        }
+
+        // Fungsi untuk menampilkan dropdown user
+        function toggleUserMenu() {
+            const dropdown = document.getElementById('userDropdown');
+            dropdown.classList.toggle('hidden');
+        }
+
+        function verifyAndStartExam(formData) {
+            fetch('verify_token.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = `exam.php?id=${data.exam_id}`;
+                } else {
+                    Swal.fire('Error!', data.message, 'error');
+                }
+            })
+            .catch(error => {
+                Swal.fire('Error!', 'Terjadi kesalahan sistem', 'error');
+            });
+        }
+
+        function startExam(examId, examTitle) {
+            <?php if (getSetting('token_required', '1') === '1'): ?>
+            document.getElementById('examId').value = examId;
+            document.getElementById('examTitle').textContent = examTitle;
+            document.getElementById('tokenModal').classList.remove('hidden');
+            <?php else: ?>
+            const formData = new FormData();
+            formData.append('exam_id', examId);
+            verifyAndStartExam(formData);
+            <?php endif; ?>
+        }
+
+        function closeTokenModal() {
+            document.getElementById('tokenModal').classList.add('hidden');
+            document.getElementById('tokenForm').reset();
+        }
+
+        function toggleChat() {
+            const chatBox = document.getElementById('chatBox');
+            chatBox.classList.toggle('hidden');
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('chatInput');
+            const message = input.value.trim();
+            
+            if (message) {
+                // Add message to chat (implement WebSocket here)
+                const messagesDiv = document.getElementById('chatMessages');
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'bg-blue-100 p-2 rounded-lg';
+                messageDiv.innerHTML = `<p class="text-sm">${message}</p><p class="text-xs text-gray-500">Sekarang</p>`;
+                messagesDiv.appendChild(messageDiv);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                
+                input.value = '';
+            }
+        }
+        
+        //ucapan
+        function updateGreeting() {
+            const hour = new Date().getHours();
+            let greetingMessage = "";
+
+            if (hour >= 5 && hour < 12) {
+                greetingMessage = "Selamat Pagi";
+            } else if (hour >= 12 && hour < 15) {
+                greetingMessage = "Selamat Siang";
+            } else if (hour >= 15 && hour < 19) {
+                greetingMessage = "Selamat Sore";
+            } else {
+                greetingMessage = "Selamat Malam!";
+            }
+
+            // Menampilkan ucapan di elemen dengan id "timeOfDayMessage"
+            document.getElementById("timeOfDayMessage").innerText = greetingMessage;
+        }
+
+        // Panggil fungsi untuk memperbarui ucapan
+        updateGreeting();
+
+        // Token form submission
+        document.getElementById('tokenForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            verifyAndStartExam(formData);
+        });
+
+        // Update token input handler
+        document.getElementById('examToken').addEventListener('input', function(e) {
+            let value = this.value;
+            // Remove spaces and non-alphanumeric characters
+            value = value.replace(/[^A-Z0-9]/gi, '');
+            // Convert to uppercase
+            value = value.toUpperCase();
+            // Limit to 6 characters
+            value = value.substring(0, 6);
+            this.value = value;
+        });
+
+        // Close modals when clicking outside
+        document.getElementById('tokenModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeTokenModal();
+            }
+        });
+
+        // Enter key for chat
+        const chatInput = document.getElementById('chatInput');
+        if (chatInput) {
+            chatInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+        }
+    </script>
+    
+    <!-- Smartsupp Live Chat script -->
+    <script type="text/javascript">
+    var _smartsupp = _smartsupp || {};
+    _smartsupp.key = '<?php echo getSetting('smartsupp_key', '165a218a36ed3f2573a2ad63ac8c36ab3876814f'); ?>';
+    // Set visitor name from PHP session
+    _smartsupp.sitePlatform = "<?php echo getSetting('app_name', 'SMK Pasundan 2 Cianjur'); ?>";
+    _smartsupp.userName = "<?php echo $_SESSION['nama']; ?>"; 
+    _smartsupp.userEmail = "<?php echo $_SESSION['username'] ?? ''; ?>";
+    _smartsupp.variables = {
+        "role": "<?php echo $_SESSION['role']; ?>",
+        "kelas": "<?php echo $_SESSION['kelas']; ?>"
+    };
+
+    window.smartsupp||(function(d) {
+        var s,c,o=smartsupp=function(){ o._.push(arguments)};o._=[];
+        s=d.getElementsByTagName('script')[0];c=d.createElement('script');
+        c.type='text/javascript';c.charset='utf-8';c.async=true;
+        c.src='https://www.smartsuppchat.com/loader.js?';s.parentNode.insertBefore(c,s);
+    })(document);
+
+    // Set name after loading
+    smartsupp('name', "<?php echo $_SESSION['nama']; ?>");
+    </script>
+<script>
+// Tampilkan popup pengumuman saat halaman dimuat
+window.addEventListener('load', function() {
+    const modal = document.getElementById('announcementModal');
+    const hasAnnouncements = <?php echo !empty($announcements) ? 'true' : 'false'; ?>;
+    const isClosed = localStorage.getItem('announcementClosed');
+    
+    if (modal && hasAnnouncements) {
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        document.body.classList.add('overflow-hidden');
+    }
+});
+
+// Fungsi tutup popup
+function closeAnnouncement() {
+    const modal = document.getElementById('announcementModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        document.body.classList.remove('overflow-hidden');
+        
+    }
+}
+
+// Tutup popup ketika klik di luar area
+window.addEventListener('click', function(event) {
+    const modal = document.getElementById('announcementModal');
+    if (event.target === modal) {
+        closeAnnouncement();
+    }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,416 @@
+/* ============================================================
+   App Theme — shared shell + content styling for admin & guru
+   Dimuat di semua halaman admin/guru (termasuk dashboard).
+   Konten halaman di-scope dengan .app-page.
+   ============================================================ */
+
+:root {
+    --a-bg: #f6f7fb;
+    --a-surface: #ffffff;
+    --a-border: #e8eaf1;
+    --a-text: #0f172a;
+    --a-muted: #64748b;
+    --a-subtle: #94a3b8;
+    --a-primary: #5b5bd6;
+    --a-primary-2: #6366f1;
+    --a-success: #10b981;
+    --a-danger: #f43f5e;
+}
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body.bg-gray-50 {
+    background:
+        radial-gradient(1100px 380px at 0% -10%, rgba(99, 102, 241, .07), transparent 60%),
+        radial-gradient(900px 360px at 100% 0%, rgba(16, 185, 129, .05), transparent 55%),
+        #f6f7fb !important;
+}
+
+/* ---------- Shell: topbar + sidebar ---------- */
+nav.bg-white.shadow-lg {
+    position: sticky;
+    top: 0;
+    z-index: 45;
+    background: rgba(255, 255, 255, .92) !important;
+    backdrop-filter: saturate(180%) blur(14px);
+    -webkit-backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid var(--a-border);
+    box-shadow: 0 1px 0 rgba(16, 24, 40, .02) !important;
+}
+
+.desktop-sidebar {
+    position: fixed;
+    top: 64px;
+    left: 0;
+    bottom: 0;
+    width: 256px;
+    height: auto;
+    overflow-y: auto;
+    background: #fff !important;
+    border-right: 1px solid #eef0f6;
+    box-shadow: none !important;
+    scrollbar-width: thin;
+    z-index: 40;
+}
+
+.desktop-sidebar h2 {
+    margin-bottom: 14px !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--a-subtle) !important;
+}
+
+.desktop-sidebar a {
+    border-radius: 9px !important;
+    font-size: 13.5px;
+    color: #475569;
+    transition: background .15s ease, color .15s ease;
+}
+
+.desktop-sidebar a:hover {
+    background: #f6f7fc !important;
+    color: var(--a-text) !important;
+}
+
+.desktop-sidebar a.bg-blue-50 {
+    background: linear-gradient(90deg, #eef0ff, #f7f8ff) !important;
+    color: #4f46e5 !important;
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--a-primary-2);
+}
+
+.desktop-sidebar a i {
+    width: 18px;
+    text-align: center;
+    color: var(--a-subtle);
+}
+
+.desktop-sidebar a.bg-blue-50 i {
+    color: #4f46e5;
+}
+
+.mobile-menu {
+    background: #fff !important;
+}
+
+/* Sidebar legacy (.sidebar) */
+.sidebar {
+    background: #fff !important;
+    border-right: 1px solid #eef0f6 !important;
+    box-shadow: none !important;
+}
+
+.sidebar-menu-title {
+    color: var(--a-subtle) !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.sidebar-menu-item {
+    color: #475569 !important;
+    border-radius: 9px !important;
+    font-size: 13.5px;
+}
+
+.sidebar-menu-item:hover {
+    background: #f6f7fc !important;
+    color: var(--a-text) !important;
+}
+
+.sidebar-menu-item.active {
+    background: linear-gradient(90deg, #eef0ff, #f7f8ff) !important;
+    color: #4f46e5 !important;
+    box-shadow: inset 3px 0 0 var(--a-primary-2);
+}
+
+.sidebar-menu-item i {
+    color: var(--a-subtle);
+}
+
+.sidebar-menu-item.active i {
+    color: #4f46e5;
+}
+
+/* ---------- Content page ---------- */
+.app-page {
+    flex: 1;
+    min-width: 0;
+    margin-left: 0;
+    padding: 28px 32px 40px !important;
+    background: transparent !important;
+    color: var(--a-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.app-page > *:not(.fixed):not(.absolute) {
+    max-width: 1440px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.app-page.max-w-4xl {
+    background: transparent !important;
+    padding: 28px 16px 40px !important;
+}
+
+.app-page h1,
+.app-page .page-title {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif !important;
+    letter-spacing: -.025em;
+}
+
+.app-page h2,
+.app-page h3,
+.app-page .card-title {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif !important;
+    letter-spacing: -.01em;
+}
+
+.app-page h1 + p {
+    color: var(--a-muted);
+}
+
+/* ---------- Cards ---------- */
+.app-page .card,
+.app-page .bg-white.rounded-lg.shadow,
+.app-page .bg-white.rounded-lg.shadow-md,
+.app-page .bg-white.rounded-lg.shadow-sm,
+.app-page .bg-white.rounded-xl.shadow,
+.app-page .bg-white.rounded-xl.shadow-md,
+.app-page .bg-white.rounded-xl.shadow-sm,
+.app-page .bg-white.rounded-2xl.shadow,
+.app-page .bg-white.rounded-2xl.shadow-md,
+.app-page .bg-white.rounded-2xl.shadow-sm {
+    background: var(--a-surface) !important;
+    border: 1px solid var(--a-border) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -24px rgba(16, 24, 40, .35) !important;
+}
+
+/* Panel modal */
+.app-page .fixed.inset-0 .bg-white.rounded-lg,
+.app-page .fixed.inset-0 .bg-white.rounded-xl,
+.app-page .fixed.inset-0 .bg-white.rounded-2xl {
+    border: 1px solid var(--a-border) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 24px 64px -16px rgba(15, 23, 42, .35) !important;
+}
+
+.app-page .fixed.inset-0.bg-gray-600,
+.app-page .fixed.inset-0.bg-black {
+    background-color: rgba(15, 23, 42, .55) !important;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+/* ---------- Tables ---------- */
+.app-page table.min-w-full,
+.app-page .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.app-page table.min-w-full thead th,
+.app-page .data-table thead th,
+.app-page .data-table th {
+    padding: 11px 18px !important;
+    background: #fbfcfe !important;
+    border-bottom: 1px solid #eef1f7 !important;
+    border-top: 0 !important;
+    color: var(--a-subtle) !important;
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.app-page table.min-w-full tbody td,
+.app-page .data-table tbody td,
+.app-page .data-table td {
+    padding: 13px 18px !important;
+    border-bottom: 1px solid #f3f5fa !important;
+    border-top: 0 !important;
+    color: #334155;
+    vertical-align: middle;
+}
+
+.app-page table.min-w-full tbody tr,
+.app-page .data-table tbody tr {
+    border-top: 0 !important;
+    transition: background .15s ease;
+}
+
+.app-page table.min-w-full tbody tr:hover,
+.app-page .data-table tbody tr:hover {
+    background: #fafbff !important;
+}
+
+.app-page table.min-w-full tbody tr:last-child td,
+.app-page .data-table tbody tr:last-child td {
+    border-bottom: 0 !important;
+}
+
+.app-page .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- Buttons ---------- */
+.app-page button.bg-blue-600,
+.app-page a.bg-blue-600,
+.app-page button.bg-blue-500,
+.app-page a.bg-blue-500,
+.app-page .btn-primary {
+    background: linear-gradient(180deg, #6366f1, #5557d8) !important;
+    border-color: transparent !important;
+    color: #fff !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 8px 18px -10px rgba(99, 102, 241, .7) !important;
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+}
+
+.app-page button.bg-blue-600:hover,
+.app-page a.bg-blue-600:hover,
+.app-page button.bg-blue-500:hover,
+.app-page a.bg-blue-500:hover,
+.app-page .btn-primary:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+    box-shadow: 0 12px 22px -10px rgba(99, 102, 241, .75) !important;
+}
+
+.app-page button.bg-green-600,
+.app-page a.bg-green-600,
+.app-page button.bg-emerald-600,
+.app-page a.bg-emerald-600,
+.app-page .btn-success {
+    background: linear-gradient(180deg, #10b981, #059669) !important;
+    color: #fff !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 8px 18px -10px rgba(16, 185, 129, .65) !important;
+}
+
+.app-page button.bg-red-600,
+.app-page a.bg-red-600,
+.app-page button.bg-rose-600,
+.app-page a.bg-rose-600,
+.app-page .btn-danger {
+    background: linear-gradient(180deg, #f43f5e, #e11d48) !important;
+    color: #fff !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    box-shadow: 0 8px 18px -10px rgba(244, 63, 94, .6) !important;
+}
+
+.app-page .btn {
+    border-radius: 10px !important;
+    font-weight: 600;
+}
+
+/* ---------- Inputs ---------- */
+.app-page input.border,
+.app-page select.border,
+.app-page textarea.border,
+.app-page input.border-gray-300,
+.app-page select.border-gray-300,
+.app-page textarea.border-gray-300,
+.app-page .form-input,
+.app-page .form-select {
+    border-color: #e2e5ee !important;
+    border-radius: 10px !important;
+    background-color: #fff !important;
+    color: var(--a-text);
+}
+
+.app-page input.border:focus,
+.app-page select.border:focus,
+.app-page textarea.border:focus,
+.app-page input.border-gray-300:focus,
+.app-page select.border-gray-300:focus,
+.app-page textarea.border-gray-300:focus,
+.app-page .form-input:focus,
+.app-page .form-select:focus {
+    outline: none !important;
+    border-color: #a5a8f0 !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, .16) !important;
+}
+
+.app-page label {
+    color: #475569;
+}
+
+/* ---------- Misc ---------- */
+.app-page .status-badge,
+.app-page .status-pill {
+    border-radius: 999px;
+    font-weight: 600;
+}
+
+.app-page ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.app-page ::-webkit-scrollbar-thumb {
+    background: #d7dbe6;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+}
+
+.app-page ::-webkit-scrollbar-thumb:hover {
+    background: #c3c9d8;
+    background-clip: content-box;
+}
+
+.app-page :focus-visible {
+    outline: 2px solid var(--a-primary-2);
+    outline-offset: 2px;
+}
+
+/* ---------- Shell spacing (fixed sidebar) ---------- */
+@media (min-width: 768px) {
+    .app-page { margin-left: 256px; }
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 767px) {
+    .desktop-sidebar { display: none !important; }
+    .app-page {
+        padding: 18px 16px 32px !important;
+    }
+
+    .app-page > *:not(.fixed):not(.absolute) {
+        max-width: 100%;
+    }
+
+    .app-page table.min-w-full thead th,
+    .app-page table.min-w-full tbody td,
+    .app-page .data-table th,
+    .app-page .data-table td {
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .app-page *,
+    .app-page *::before,
+    .app-page *::after,
+    nav.bg-white.shadow-lg * {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+    }
+}

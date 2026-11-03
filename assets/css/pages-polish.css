@@ -1,0 +1,289 @@
+/* ============================================================
+   Pages Polish — penyelaras tampilan halaman guru/admin
+   dengan gaya Dashboard (Obsidian Prism light).
+   Dimuat SETELAH app-theme.css. Semua aturan di-scope .app-page
+   agar tidak menyentuh halaman dashboard maupun halaman publik.
+   ============================================================ */
+
+/* ---------- Ritme halaman ---------- */
+.app-page {
+    --p-gap: 20px;
+}
+
+/* ---------- Judul halaman ---------- */
+.app-page h1 {
+    margin: 0 0 6px !important;
+    font-size: 30px !important;
+    line-height: 1.15 !important;
+    font-weight: 800 !important;
+    letter-spacing: -.025em !important;
+    color: #0f172a !important;
+}
+
+/* Aksen kecil di atas judul, seirama dengan eyebrow dashboard */
+.app-page h1::before {
+    content: "";
+    display: block;
+    width: 30px;
+    height: 3px;
+    margin-bottom: 13px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #6366f1, #10b981);
+}
+
+/* Ikon di dalam judul dibuat lebih kalem */
+.app-page h1 > i {
+    font-size: .72em !important;
+    color: #6366f1 !important;
+    opacity: .9;
+    margin-right: 10px !important;
+}
+
+/* Judul yang rata tengah: aksen ikut di tengah */
+.app-page .text-center h1::before {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Subjudul tepat di bawah judul */
+.app-page h1 + p {
+    margin: 0 0 22px !important;
+    max-width: 720px;
+    font-size: 14px !important;
+    line-height: 1.5;
+    color: #64748b !important;
+}
+
+/* Baris header pertama selalu punya jarak bawah yang sama */
+.app-page > .mb-6:first-child,
+.app-page > .mb-4:first-child {
+    margin-bottom: 22px !important;
+}
+
+/* Baris header (judul + tombol aksi) */
+.app-page > .flex.justify-between.items-center.mb-6,
+.app-page > .flex.items-center.justify-between.mb-6 {
+    margin-bottom: 22px !important;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+/* Judul yang berada di dalam baris header tidak perlu jarak bawah */
+.app-page > .flex.justify-between.items-center.mb-6 > h1,
+.app-page > .flex.items-center.justify-between.mb-6 > h1 {
+    margin-bottom: 0 !important;
+}
+
+/* ---------- Tombol ---------- */
+.app-page button,
+.app-page a.btn,
+.app-page .btn {
+    font-size: 13px;
+    font-weight: 600;
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease, background .15s ease;
+}
+
+.app-page button.rounded-lg,
+.app-page a.rounded-lg.btn,
+.app-page .btn.rounded-lg {
+    border-radius: 10px !important;
+}
+
+.app-page button.px-6.py-2,
+.app-page a.px-6.py-2,
+.app-page button.px-4.py-2,
+.app-page a.px-4.py-2 {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.app-page button.bg-blue-600:hover,
+.app-page a.bg-blue-600:hover {
+    transform: translateY(-1px);
+}
+
+/* ---------- Kartu panel ---------- */
+.app-page .bg-white.rounded-lg.shadow,
+.app-page .bg-white.rounded-xl.shadow,
+.app-page .bg-white.rounded-lg.shadow-sm,
+.app-page .bg-white.rounded-xl.shadow-sm {
+    box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -24px rgba(16, 24, 40, .35) !important;
+}
+
+/* Kartu yang isinya murni tabel: padding dihilangkan supaya
+   header tabel melebar penuh seperti panel dashboard. */
+.app-page .bg-white.rounded-lg.shadow:has(> .p-6 > .overflow-x-auto),
+.app-page .bg-white.rounded-xl.shadow:has(> .p-6 > .overflow-x-auto),
+.app-page .bg-white.rounded-lg.shadow-sm:has(> .p-6 > .overflow-x-auto) {
+    overflow: hidden;
+}
+
+.app-page .p-6:has(> .overflow-x-auto):not(:has(> h1)):not(:has(> h2)):not(:has(> h3)):not(:has(> p)):not(:has(> .flex)) {
+    padding: 0 !important;
+}
+
+/* Jarak antar blok konten */
+.app-page > .mb-6 + .mb-6 {
+    margin-top: 0 !important;
+}
+
+/* ---------- Tabel ---------- */
+.app-page table.min-w-full thead th,
+.app-page .data-table thead th {
+    letter-spacing: .09em !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+}
+
+.app-page table.min-w-full tbody td,
+.app-page .data-table tbody td {
+    font-size: 13px !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+}
+
+/* Tautan aksi di dalam tabel */
+.app-page table a,
+.app-page .data-table a {
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.app-page table a.text-blue-600,
+.app-page .data-table a.text-blue-600 {
+    color: #5b5bd6 !important;
+}
+
+.app-page table a.text-red-600,
+.app-page .data-table a.text-red-600 {
+    color: #e11d48 !important;
+}
+
+/* ---------- Badge / pill status ---------- */
+.app-page .bg-green-100.text-green-800,
+.app-page .bg-green-100.text-green-700,
+.app-page .bg-yellow-100.text-yellow-800,
+.app-page .bg-yellow-100.text-yellow-700,
+.app-page .bg-red-100.text-red-800,
+.app-page .bg-red-100.text-red-700,
+.app-page .bg-blue-100.text-blue-800,
+.app-page .bg-blue-100.text-blue-700,
+.app-page .bg-gray-100.text-gray-800,
+.app-page .bg-gray-100.text-gray-700,
+.app-page .bg-purple-100.text-purple-800,
+.app-page .bg-indigo-100.text-indigo-800 {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.app-page .bg-green-100.text-green-800::before,
+.app-page .bg-green-100.text-green-700::before,
+.app-page .bg-yellow-100.text-yellow-800::before,
+.app-page .bg-yellow-100.text-yellow-700::before,
+.app-page .bg-red-100.text-red-800::before,
+.app-page .bg-red-100.text-red-700::before,
+.app-page .bg-blue-100.text-blue-800::before,
+.app-page .bg-blue-100.text-blue-700::before,
+.app-page .bg-gray-100.text-gray-800::before,
+.app-page .bg-gray-100.text-gray-700::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+}
+
+/* ---------- Empty state ---------- */
+.app-page .bg-white.shadow.text-center.p-8,
+.app-page .bg-white.rounded-lg.shadow.text-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 42px 24px !important;
+}
+
+.app-page .bg-white.shadow.text-center.p-8 > i:first-child,
+.app-page .bg-white.rounded-lg.shadow.text-center > i:first-child {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    margin-bottom: 14px !important;
+    border-radius: 15px;
+    background: #f1f3f9;
+    color: #94a3b8 !important;
+    font-size: 20px !important;
+}
+
+.app-page .bg-white.shadow.text-center.p-8 > h3,
+.app-page .bg-white.rounded-lg.shadow.text-center > h3 {
+    margin: 0 0 6px !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+}
+
+.app-page .bg-white.shadow.text-center.p-8 > p,
+.app-page .bg-white.rounded-lg.shadow.text-center > p {
+    margin: 0 !important;
+    max-width: 420px;
+    font-size: 13px !important;
+    color: #64748b !important;
+}
+
+/* ---------- Form filter ---------- */
+.app-page .form-select,
+.app-page select.border,
+.app-page select.border-gray-300 {
+    min-height: 38px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    font-size: 13px;
+}
+
+.app-page .form-input,
+.app-page input.border,
+.app-page input.border-gray-300 {
+    min-height: 38px;
+    font-size: 13px;
+}
+
+/* ---------- Modal ---------- */
+.app-page .fixed.inset-0 .bg-white h3,
+.app-page .fixed.inset-0 .bg-white h2 {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif !important;
+    letter-spacing: -.015em;
+}
+
+/* ---------- Chart container ---------- */
+.app-page canvas {
+    max-width: 100%;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 767px) {
+    .app-page h1 {
+        font-size: 23px !important;
+    }
+
+    .app-page h1::before {
+        margin-bottom: 10px;
+    }
+
+    .app-page .p-6:has(> .overflow-x-auto):not(:has(> h1)):not(:has(> h2)):not(:has(> h3)):not(:has(> p)):not(:has(> .flex)) {
+        padding: 0 !important;
+    }
+}

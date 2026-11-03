@@ -1,0 +1,363 @@
+<?php
+// Set timezone to Asia/Jakarta
+date_default_timezone_set('Asia/Jakarta');
+
+// Initialize Redis Cache (will fallback gracefully if Redis is not available)
+require_once 'redis.php';
+RedisCache::init();
+
+// Set session save path to a writable directory within the project (fallback)
+$session_path = __DIR__ . '/../tmp/sessions';
+if (!is_dir($session_path)) {
+    @mkdir($session_path, 0755, true);
+}
+if (is_dir($session_path) && is_writable($session_path)) {
+    ini_set('session.save_path', $session_path);
+}
+
+// Try to use Redis session handler, fallback to file-based if Redis is not available
+require_once 'redis_session.php';
+if (!initRedisSession()) {
+    // Fallback to file-based sessions
+    error_log('Redis session not available, using file-based sessions');
+}
+
+// Start session with error suppression for permission issues
+if (session_status() === PHP_SESSION_NONE) {
+    @session_start();
+}
+
+// ============================================================================
+// [ajax-guard] Setiap request POST yang membawa "action" dipanggil lewat fetch
+// dari halaman admin dan WAJIB dibalas JSON. Tanpa ini, redirect (session
+// habis) atau error PHP membuat response berisi HTML, sehingga di browser
+// muncul notifikasi generik "Terjadi kesalahan sistem".
+// ============================================================================
+if (!function_exists('is_ajax_action_request')) {
+    function is_ajax_action_request() {
+        return (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST')
+            && !empty($_POST['action']);
+    }
+}
+
+if (!function_exists('json_error')) {
+    function json_error($message, $httpCode = 200) {
+        if (!headers_sent()) {
+            http_response_code($httpCode);
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo json_encode(['success' => false, 'message' => $message]);
+        exit();
+    }
+}
+
+if (is_ajax_action_request()) {
+    // Notice/warning PHP tidak boleh merusak output JSON
+    set_error_handler(function ($errno, $errstr, $errfile, $errline) {
+        if (!(error_reporting() & $errno)) {
+            return false;
+        }
+        error_log("[ajax] PHP($errno): $errstr di $errfile:$errline");
+        return true;
+    });
+
+    // Exception yang tidak tertangkap -> balas JSON berisi penyebab aslinya,
+    // bukan halaman error 500 yang membuat JSON gagal dibaca browser.
+    set_exception_handler(function ($e) {
+        error_log('[ajax] ' . get_class($e) . ': ' . $e->getMessage());
+
+        $msg = $e->getMessage();
+
+        if ($e instanceof PDOException) {
+            $code = isset($e->errorInfo[1]) ? (int) $e->errorInfo[1] : 0;
+            if ($code === 1062) {
+                $msg = 'Data sudah ada (duplikat). Gunakan username / kode lain.';
+            } elseif ($code === 1451 || $code === 1452) {
+                $msg = 'Data ini masih terhubung dengan data lain sehingga tidak bisa diubah / dihapus.';
+            } elseif ($code === 1048) {
+                $msg = 'Ada kolom wajib yang belum diisi.';
+            } else {
+                $msg = 'Kesalahan database: ' . $msg;
+            }
+        }
+
+        if (!headers_sent()) {
+            http_response_code(200);
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo json_encode(['success' => false, 'message' => $msg]);
+        exit();
+    });
+}
+
+// Database configuration
+require_once 'database.php';
+
+// Security functions
+function sanitizeInput($input) {
+    // Simpan teks APA ADANYA (raw) ke database. Escaping dilakukan saat OUTPUT
+    // (htmlspecialchars) agar karakter seperti ' (apostrof), & atau < tidak
+    // berubah jadi teks entity (&#039;) yang muncul mentah di halaman ujian.
+    return strip_tags(trim($input));
+}
+
+function isLoggedIn() {
+    return isset($_SESSION['user_id']) && !empty($_SESSION['user_id']);
+}
+
+// Auto-logout if session is reset by admin
+// Hanya berlaku untuk PESERTA (anti-cheat 1 sesi). Guru & admin boleh multi-device.
+if (isLoggedIn() && (($_SESSION['role'] ?? '') === 'peserta')) {
+    try {
+        $db = new Database();
+        $conn = $db->getConnection();
+
+        $query = "SELECT session_id FROM users WHERE id = ?";
+        $stmt = $conn->prepare($query);
+        $stmt->execute([$_SESSION['user_id']]);
+        $db_session_id = $stmt->fetchColumn();
+
+        if ($db_session_id !== $_SESSION['session_id']) {
+            session_unset();
+            session_destroy();
+            // Untuk request AJAX (simpan/ubah data) jangan redirect: balas JSON
+            // agar pengguna melihat pesan yang jelas, bukan "Terjadi kesalahan sistem".
+            if (is_ajax_action_request()) {
+                json_error('Sesi Anda tidak lagi aktif (kemungkinan login di perangkat/tab lain). Silakan login ulang, lalu ulangi perubahannya.');
+            }
+            // Redirect to login with a status message
+            header('Location: ../login.php?status=session_reset');
+            exit();
+        }
+    } catch (Exception $e) {
+        // Gracefully fail without blocking user if DB is down
+        error_log("Session validation error: " . $e->getMessage());
+    }
+}
+
+// [nullfix] Error tetap DICATAT ke log, tapi TIDAK ditampilkan di halaman pengguna.
+// Nyalakan APP_DEBUG (true) hanya saat debugging di server lokal.
+if (!defined('APP_DEBUG')) { define('APP_DEBUG', false); }
+error_reporting(E_ALL);
+ini_set('display_errors', APP_DEBUG ? '1' : '0');
+ini_set('log_errors', '1');
+
+function requireLogin() {
+    if (!isLoggedIn()) {
+        if (is_ajax_action_request()) {
+            json_error('Sesi login Anda sudah berakhir. Silakan login ulang, lalu ulangi perubahannya.');
+        }
+        header('Location: ../login.php');
+        exit();
+    }
+}
+
+function requireRole($role) {
+    requireLogin();
+    if ($_SESSION['role'] !== $role) {
+        if (is_ajax_action_request()) {
+            json_error('Akun Anda tidak punya akses untuk melakukan aksi ini.');
+        }
+        header('Location: ../login.php');
+        exit();
+    }
+}
+
+// Cek apakah session ID kustom masih hidup (ada di Redis/file session)
+// Dipakai agar siswa tidak terjebak "akun aktif di perangkat lain" ketika session-nya mati
+function isSessionIdAlive($pjCustomSessionId) {
+    if (empty($pjCustomSessionId)) return false;
+
+    // 1) Cek di Redis jika aktif
+    if (class_exists('RedisCache') && RedisCache::isEnabled()) {
+        try {
+            $pjRedis = RedisCache::getInstance();
+            if ($pjRedis) {
+                $pjKeys = $pjRedis->keys('sess:*');
+                if (!empty($pjKeys) && (is_array($pjKeys) || $pjKeys instanceof Traversable)) {
+                    foreach ($pjKeys as $pjKey) {
+                        $pjData = $pjRedis->get($pjKey);
+                        if ($pjData !== false && $pjData !== null && strpos($pjData, $pjCustomSessionId) !== false) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+        } catch (Exception $e) {
+            error_log('isSessionIdAlive redis error: ' . $e->getMessage());
+        }
+    }
+
+    // 2) Fallback: cek file session
+    $pjDirs = array(__DIR__ . '/../tmp/sessions', '/var/lib/php/sessions');
+    foreach ($pjDirs as $pjDir) {
+        if (!is_dir($pjDir)) continue;
+        foreach (glob($pjDir . '/sess_*') as $pjFile) {
+            $pjData = @file_get_contents($pjFile);
+            if ($pjData !== false && strpos($pjData, $pjCustomSessionId) !== false) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Settings functions with Redis caching
+function getSetting($key, $default = '') {
+    // Try to get from Redis cache first
+    $cacheKey = 'settings:' . $key;
+    $cached = RedisCache::get($cacheKey);
+    if ($cached !== null) {
+        return $cached;
+    }
+    
+    // If not in cache, get all settings and cache them
+    static $settings = null;
+    
+    if ($settings === null) {
+        // Try to get all settings from cache
+        $allSettingsCache = RedisCache::get('settings:all');
+        
+        if ($allSettingsCache !== null) {
+            $settings = $allSettingsCache;
+        } else {
+            $settings = [
+                'app_name' => 'SMK Pasundan 2 Cianjur',
+                'app_logo' => 'assets/img/logo.png',
+                'app_favicon' => 'assets/img/logo.png',
+                'footer_text' => '© 2025 SMK Pasundan 2 Cianjur. All rights reserved.',
+                'maintenance_mode' => '0',
+                'token_required' => '1',
+                // Default Discord webhook for ticket logs; can be overridden via settings table
+                'discord_webhook_url' => 'https://discord.com/api/webhooks/1418224777927331870/QilEJ829FjlUyA5PCAV5Zfn8NCQj_V_DeZcNs-pUY81U_KwOxV8zjFCOQD9hMSofleO0'
+            ];
+            
+            try {
+                $db = new Database();
+                $conn = $db->getConnection();
+                
+                $query = "SELECT setting_key, setting_value FROM settings";
+                $stmt = $conn->prepare($query);
+                $stmt->execute();
+                
+                while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                    $settings[$row['setting_key']] = $row['setting_value'];
+                }
+                
+                // Cache all settings for 1 hour
+                RedisCache::set('settings:all', $settings, 3600);
+            } catch (Exception $e) {
+                error_log("Get settings error: " . $e->getMessage());
+            }
+        }
+    }
+    
+    $value = isset($settings[$key]) ? $settings[$key] : $default;
+    
+    // Cache individual setting for faster access
+    RedisCache::set($cacheKey, $value, 3600);
+    
+    return $value;
+}
+
+// Logging function
+function logActivity($userId, $activity) {
+    try {
+        $db = new Database();
+        $conn = $db->getConnection();
+        
+        $query = "INSERT INTO logs (user_id, aktivitas, waktu) VALUES (?, ?, NOW())";
+        $stmt = $conn->prepare($query);
+        $stmt->execute([$userId, $activity]);
+    } catch (Exception $e) {
+        error_log("Log error: " . $e->getMessage());
+    }
+}
+
+// Update setting function with cache invalidation
+function updateSetting($key, $value) {
+    try {
+        $db = new Database();
+        $conn = $db->getConnection();
+        
+        // Check if setting exists
+        $query = "SELECT COUNT(*) FROM settings WHERE setting_key = ?";
+        $stmt = $conn->prepare($query);
+        $stmt->execute([$key]);
+        $exists = (int)$stmt->fetchColumn() > 0;
+        
+        $result = false;
+        if ($exists) {
+            // Update existing setting
+            $query = "UPDATE settings SET setting_value = ?, updated_at = NOW() WHERE setting_key = ?";
+            $stmt = $conn->prepare($query);
+            $result = $stmt->execute([$value, $key]);
+        } else {
+            // Insert new setting
+            $query = "INSERT INTO settings (setting_key, setting_value, created_at, updated_at) VALUES (?, ?, NOW(), NOW())";
+            $stmt = $conn->prepare($query);
+            $result = $stmt->execute([$key, $value]);
+        }
+        
+        // Invalidate cache if update was successful
+        if ($result) {
+            RedisCache::delete('settings:' . $key);
+            RedisCache::delete('settings:all');
+        }
+        
+        return $result;
+    } catch (Exception $e) {
+        error_log("Update setting error: " . $e->getMessage());
+        return false;
+    }
+}
+
+// Discord webhook helper for ticket logs
+function sendDiscordLog($message, $filePath = null) {
+    $webhookUrl = getSetting('discord_webhook_url');
+    if (!$webhookUrl) { return false; }
+
+    $payload = [
+        'username' => 'OPEN-TIKET-LOGS',
+        'content' => $message
+    ];
+
+    $ch = curl_init($webhookUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+    if ($filePath && file_exists($filePath)) {
+        $fields = [
+            'payload_json' => json_encode($payload),
+            'file' => new CURLFile($filePath)
+        ];
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $fields);
+    } else {
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    }
+
+    $res = curl_exec($ch);
+    if ($res === false) {
+        error_log('Discord webhook error: ' . curl_error($ch));
+    }
+    curl_close($ch);
+    return $res !== false;
+}
+
+// Include functions
+require_once 'functions.php';
+
+// Include cache helpers (optional, can be included when needed)
+// require_once 'cache_helpers.php';
+
+// ---------------------------------------------------------------------------
+// Lisensi
+// Wajib dimuat paling akhir karena butuh getSetting(), Database, dan RedisCache.
+// license_gate() akan mengalihkan ke /license.php bila lisensi tidak valid.
+// ---------------------------------------------------------------------------
+require_once __DIR__ . '/license.php';
+
+// Kunci akses bila lisensi tidak valid (kecuali login & halaman lisensi)
+license_gate();
+?>

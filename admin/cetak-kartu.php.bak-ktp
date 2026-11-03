@@ -1,0 +1,616 @@
+<?php
+require_once '../config/config.php';
+requireRole('admin');
+require_once '../assets/includes/qr_code.php';
+
+$db = new Database();
+$conn = $db->getConnection();// Get school settings
+$school_name = getSetting('app_name', 'CBT SMK');
+$school_logo = getSetting('app_logo', 'assets/img/logo.png');
+$card_title = getSetting('card_title', 'Penilaian Sumatif Tengah Semester');
+$academic_year = getSetting('academic_year', '2025/2026');
+$card_year = 'Tahun Pelajaran ' . $academic_year;
+$card_color = getSetting('card_color', 'blue'); // Default color theme
+
+// Function to get class names from class IDs
+function getClassNames($conn, $kelasIds) {
+    if (empty($kelasIds)) {
+        return 'Tidak ada kelas';
+    }
+    
+    // Split comma-separated IDs and clean them
+    $ids = array_map('trim', explode(',', $kelasIds));
+    $ids = array_filter($ids, function($id) {
+        return !empty($id) && is_numeric($id);
+    });
+    
+    if (empty($ids)) {
+        return 'Tidak ada kelas';
+    }
+    
+    // Create placeholders for prepared statement
+    $placeholders = str_repeat('?,', count($ids) - 1) . '?';
+    
+    $query = "SELECT nama_kelas FROM classes WHERE id IN ($placeholders) ORDER BY nama_kelas";
+    $stmt = $conn->prepare($query);
+    $stmt->execute($ids);
+    $classes = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    
+    return !empty($classes) ? implode(', ', $classes) : 'Kelas tidak ditemukan';
+}
+
+// [kartufix] Filter kartu: kelas (kolom users.kelas bisa berisi banyak ID dipisah koma) + pencarian
+$filter_kelas = (isset($_GET['kelas']) && is_scalar($_GET['kelas'])) ? preg_replace('/[^0-9]/', '', (string) $_GET['kelas']) : '';
+$filter_q     = (isset($_GET['q']) && is_scalar($_GET['q'])) ? trim((string) $_GET['q']) : '';
+
+$query = "SELECT u.id, u.username, u.nama, u.password, u.kelas,
+          CASE
+              WHEN u.plain_password IS NOT NULL AND u.plain_password != '' THEN u.plain_password
+              ELSE '(Password tidak tersedia dalam bentuk plaintext)'
+          END AS display_password
+          FROM users u
+          JOIN roles r ON u.role_id = r.id
+          WHERE r.nama = 'peserta'";
+$params = [];
+
+if ($filter_kelas !== '') {
+    $query .= " AND u.kelas REGEXP ?";
+    $params[] = '(^|,)' . $filter_kelas . '(,|$)';
+}
+if ($filter_q !== '') {
+    $query .= " AND (u.nama LIKE ? OR u.username LIKE ?)";
+    $params[] = '%' . $filter_q . '%';
+    $params[] = '%' . $filter_q . '%';
+}
+
+$query .= " ORDER BY u.kelas, u.nama";
+$stmt = $conn->prepare($query);
+$stmt->execute($params);
+$students = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// [kartufix] Daftar kelas untuk dropdown filter
+$kelas_list = $conn->query("SELECT id, nama_kelas FROM classes ORDER BY nama_kelas ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+// Add class names to each student
+foreach ($students as &$student) {
+    $student['nama_kelas'] = getClassNames($conn, $student['kelas']);
+}
+// WAJIB: putus referensi $student, kalau tidak loop berikutnya menimpa elemen terakhir
+unset($student);
+
+// Get color themes
+$color_themes = [
+    'blue' => [
+        'gradient' => 'linear-gradient(135deg, #0ea5e9 0%, #0c4a6e 100%)',
+        'text' => 'text-primary-700',
+        'accent' => 'text-secondary-500'
+    ],
+    'purple' => [
+        'gradient' => 'linear-gradient(135deg, #8b5cf6 0%, #4c1d95 100%)',
+        'text' => 'text-purple-700',
+        'accent' => 'text-pink-500'
+    ],
+    'green' => [
+        'gradient' => 'linear-gradient(135deg, #10b981 0%, #064e3b 100%)',
+        'text' => 'text-green-700',
+        'accent' => 'text-yellow-500'
+    ],
+    'red' => [
+        'gradient' => 'linear-gradient(135deg, #ef4444 0%, #7f1d1d 100%)',
+        'text' => 'text-red-700',
+        'accent' => 'text-amber-500'
+    ],
+];
+
+// Set active theme
+$active_theme = isset($color_themes[$card_color]) ? $color_themes[$card_color] : $color_themes['blue'];
+
+// Log activity
+logActivity($_SESSION['user_id'], "Mencetak kartu ujian");
+
+/**
+ * [qrcard] Deteksi base URL aplikasi yang SEDANG DIPAKAI (tidak hardcode).
+ * Mendukung Cloudflare / reverse proxy (X-Forwarded-Proto & X-Forwarded-Host)
+ * serta instalasi di sub-folder.
+ */
+function getAppBaseUrl() {
+    // Skema: header proxy lebih diutamakan, lalu HTTPS server, lalu port 443
+    $scheme = 'http';
+    if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+        $protoParts = explode(',', (string) $_SERVER['HTTP_X_FORWARDED_PROTO']);
+        $proto = strtolower(trim($protoParts[0]));
+        if ($proto === 'https' || $proto === 'http') {
+            $scheme = $proto;
+        }
+    } elseif (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off') {
+        $scheme = 'https';
+    } elseif (isset($_SERVER['SERVER_PORT']) && (int) $_SERVER['SERVER_PORT'] === 443) {
+        $scheme = 'https';
+    }
+
+    // Host: X-Forwarded-Host -> HTTP_HOST -> SERVER_NAME
+    $host = '';
+    foreach (array('HTTP_X_FORWARDED_HOST', 'HTTP_HOST', 'SERVER_NAME') as $hostKey) {
+        if (!empty($_SERVER[$hostKey])) {
+            $hostParts = explode(',', (string) $_SERVER[$hostKey]);
+            $candidate = trim($hostParts[0]);
+            if ($candidate !== '') {
+                $host = $candidate;
+                break;
+            }
+        }
+    }
+    // Buang karakter yang tidak valid, sisakan host:port
+    $host = preg_replace('/[^A-Za-z0-9\.\-:\[\]]/', '', $host);
+
+    // Path dasar aplikasi: /admin/cetak-kartu.php -> '' ; /app/admin/... -> '/app'
+    $scriptName = str_replace('\\', '/', (string) (isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : ''));
+    $basePath = rtrim(str_replace('\\', '/', dirname(dirname($scriptName))), '/');
+    if ($basePath === '.' || $basePath === '/') {
+        $basePath = '';
+    }
+
+    if ($host === '') {
+        // Fallback (mis. dipanggil dari CLI): pakai setting bila ada
+        $fallback = trim((string) getSetting('app_url', ''));
+        return $fallback !== '' ? rtrim($fallback, '/') : '';
+    }
+
+    return $scheme . '://' . $host . $basePath;
+}
+
+/**
+ * [qrcard] Bangun QR Code asli per peserta (SVG inline) berisi kredensial
+ * + URL domain yang sedang dipakai.
+ */
+function buildStudentQrSvg($student, $baseUrl) {
+    $payload = array(
+        'username' => (string) $student['username'],
+        'password' => (string) $student['display_password'],
+        'url'      => (string) $baseUrl,
+    );
+    $data = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($data === false || $data === '') {
+        $data = (string) $baseUrl;
+    }
+
+    try {
+        $qr = SimpleQrCode::encodeText($data, SimpleQrCode::ECL_M);
+        return $qr->toSvg(104, 3, '#111827', '#ffffff');
+    } catch (Exception $e) {
+        return '';
+    }
+}
+
+// [qrcard] Base URL sekali hitung, dipakai semua kartu
+$app_base_url = getAppBaseUrl();
+?>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#ffffff">
+    <title>Cetak Kartu Ujian - <?php echo $school_name; ?></title>
+    <link rel="icon" type="image/x-icon" href="../<?php echo getSetting('app_favicon', 'assets/img/favicon.ico'); ?>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="../assets/js/session-guard.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Poppins', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            200: '#bae6fd',
+                            300: '#7dd3fc',
+                            400: '#38bdf8',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                            800: '#075985',
+                            900: '#0c4a6e',
+                        },
+                        secondary: {
+                            50: '#fdf4ff',
+                            100: '#fae8ff',
+                            200: '#f5d0fe',
+                            300: '#f0abfc',
+                            400: '#e879f9',
+                            500: '#d946ef',
+                            600: '#c026d3',
+                            700: '#a21caf',
+                            800: '#86198f',
+                            900: '#701a75',
+                        },
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        @media print {
+            body {
+                margin: 0;
+                padding: 0;
+                background: white;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            .card {
+                break-inside: avoid;
+                page-break-inside: avoid;
+                margin-bottom: 0.5cm;
+                color: inherit !important;
+                background-color: inherit !important;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1) !important;
+                border: 1px solid #e5e7eb !important;
+            }
+            .card-gradient {
+                print-color-adjust: exact !important;
+                -webkit-print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            /* Ensure white text remains visible on colored backgrounds */
+            .text-white {
+                color: white !important;
+                text-shadow: 0 0 1px rgba(0, 0, 0, 0.5) !important;
+            }
+            @page {
+                size: A4;
+                margin: 1cm;
+            }
+        }
+        .card-gradient {
+            background: linear-gradient(135deg, #0ea5e9 0%, #0c4a6e 100%);
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+        }
+        .card-header {
+            background: linear-gradient(90deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.2) 100%);
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+        }
+        .qr-placeholder {
+            background: #ffffff;
+            padding: 3px;
+            border-radius: 4px;
+            width: 104px;
+            height: 104px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            line-height: 0;
+        }
+        .qr-placeholder svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        /* Ensure colors are preserved when printing */
+        @media print {
+            .text-primary-700, .text-purple-700, .text-green-700, .text-red-700,
+            .text-secondary-500, .text-pink-500, .text-yellow-500, .text-amber-500 {
+                color: inherit !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            .text-white {
+                color: white !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            /* Force background colors to print */
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+                forced-color-adjust: none !important;
+            }
+            /* Ensure gradients print properly */
+            [data-theme="blue"] .card-gradient {
+                background-color: #0ea5e9 !important; /* Fallback color if gradient doesn't print */
+            }
+            [data-theme="purple"] .card-gradient {
+                background-color: #8b5cf6 !important; /* Fallback color if gradient doesn't print */
+            }
+            [data-theme="green"] .card-gradient {
+                background-color: #10b981 !important; /* Fallback color if gradient doesn't print */
+            }
+            [data-theme="red"] .card-gradient {
+                background-color: #ef4444 !important; /* Fallback color if gradient doesn't print */
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+    <!-- Header - Only visible before printing -->
+    <div class="no-print bg-white shadow-md p-4 mb-6">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center">
+                <img src="../<?php echo $school_logo; ?>" alt="Logo" class="h-10 w-10 mr-3">
+                <h1 class="text-xl font-bold text-gray-900"><?php echo $school_name; ?> - Cetak Kartu Ujian</h1>
+            </div>
+            <div class="flex space-x-4">
+                <button onclick="window.print()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg transition duration-300 shadow-md hover:shadow-lg">
+                    <i class="fas fa-print mr-2"></i>Cetak Kartu
+                </button>
+                <a href="users.php<?php echo $filter_kelas !== '' ? '?kelas=' . urlencode($filter_kelas) : ''; ?>" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition duration-300">
+                    <i class="fas fa-arrow-left mr-2"></i>Kembali
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- [kartufix] Filter Kartu -->
+    <div class="no-print max-w-7xl mx-auto mb-6">
+        <div class="bg-white rounded-lg shadow p-4">
+            <h3 class="text-lg font-semibold text-gray-900 mb-3">Filter Kartu</h3>
+            <form method="GET" action="cetak-kartu.php" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                    <label for="filterKelas" class="block text-sm font-medium text-gray-700">Kelas</label>
+                    <select name="kelas" id="filterKelas" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                        <option value="">Semua Kelas</option>
+                        <?php foreach ($kelas_list as $kelas_option): ?>
+                        <option value="<?php echo $kelas_option['id']; ?>" <?php echo ($filter_kelas === (string) $kelas_option['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($kelas_option['nama_kelas']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label for="filterQ" class="block text-sm font-medium text-gray-700">Cari Nama / Username</label>
+                    <input type="text" name="q" id="filterQ" value="<?php echo htmlspecialchars($filter_q); ?>" placeholder="mis. Ahmad" class="mt-1 block w-full px-3 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                </div>
+                <div class="flex items-end space-x-2">
+                    <button type="submit" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg transition duration-300 shadow-md hover:shadow-lg">
+                        <i class="fas fa-filter mr-2"></i>Tampilkan
+                    </button>
+                    <a href="cetak-kartu.php" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg transition duration-300">
+                        <i class="fas fa-undo mr-2"></i>Reset
+                    </a>
+                </div>
+                <div class="text-sm text-gray-600 md:text-right">
+                    <span class="font-semibold text-gray-900"><?php echo count($students); ?></span> kartu
+                    <?php if ($filter_kelas !== ''): ?>
+                    <div class="text-xs mt-1">Kelas: <span class="font-medium text-gray-800"><?php echo htmlspecialchars(getClassNames($conn, $filter_kelas)); ?></span></div>
+                    <?php endif; ?>
+                    <?php if ($filter_q !== ''): ?>
+                    <div class="text-xs mt-1">Cari: <span class="font-medium text-gray-800">&ldquo;<?php echo htmlspecialchars($filter_q); ?>&rdquo;</span></div>
+                    <?php endif; ?>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Color Theme Selector (only visible before printing) -->
+    <div class="no-print max-w-7xl mx-auto mb-6">
+        <div class="bg-white rounded-lg shadow p-4">
+            <h3 class="text-lg font-semibold text-gray-900 mb-3">Pengaturan Kartu</h3>
+            <div class="flex items-center space-x-4 mb-3">
+                <label class="text-sm text-gray-700">Pilih Warna Tema:</label>
+                <div class="flex space-x-2">
+                    <button onclick="changeTheme('blue', true)" class="w-8 h-8 rounded-full bg-gradient-to-r from-blue-400 to-blue-800 border-2 border-white shadow-sm hover:scale-110 transition-transform" title="Biru"></button>
+                    <button onclick="changeTheme('purple', true)" class="w-8 h-8 rounded-full bg-gradient-to-r from-purple-400 to-purple-800 border-2 border-white shadow-sm hover:scale-110 transition-transform" title="Ungu"></button>
+                    <button onclick="changeTheme('green', true)" class="w-8 h-8 rounded-full bg-gradient-to-r from-green-400 to-green-800 border-2 border-white shadow-sm hover:scale-110 transition-transform" title="Hijau"></button>
+                    <button onclick="changeTheme('red', true)" class="w-8 h-8 rounded-full bg-gradient-to-r from-red-400 to-red-800 border-2 border-white shadow-sm hover:scale-110 transition-transform" title="Merah"></button>
+                </div>
+                <div id="saveStatus" class="text-sm text-green-600 hidden">✓ Tema tersimpan</div>
+            </div>
+            <div class="flex justify-end">
+                <button onclick="printWithCurrentTheme()" class="bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg transition duration-300 shadow-md hover:shadow-lg text-sm">
+                    <i class="fas fa-print mr-2"></i>Cetak dengan Tema Ini
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cards Container -->
+    <?php if (empty($students)): ?>
+    <div class="max-w-7xl mx-auto p-4">
+        <div class="bg-white rounded-xl shadow p-10 text-center">
+            <i class="fas fa-id-card text-5xl text-gray-300 mb-4"></i>
+            <p class="text-lg font-semibold text-gray-800">Tidak ada kartu untuk filter ini</p>
+            <p class="text-sm text-gray-500 mt-1">Pilih kelas lain, atau klik <b>Reset</b> untuk menampilkan semua peserta.</p>
+        </div>
+    </div>
+    <?php else: ?>
+    <div class="max-w-7xl mx-auto p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <?php foreach ($students as $student): ?>
+        <?php 
+            // [qrcard] QR Code asli per peserta, mengarah ke domain yang sedang dipakai
+            $qr_svg = buildStudentQrSvg($student, $app_base_url);
+        ?>
+        <div class="card overflow-hidden rounded-xl shadow-lg theme-card" style="width:420px;min-height:240px;margin:auto" data-theme="<?php echo $card_color; ?>">
+            <!-- Card Header with gradient background -->
+            <div class="card-gradient text-white p-4" style="background: <?php echo $active_theme['gradient']; ?>; color: white !important;">
+                <div class="flex items-center card-header rounded-lg p-3" style="background: linear-gradient(90deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.2) 100%);">
+                    <div class="flex-shrink-0 mr-4">
+                        <div class="bg-white p-2 rounded-full shadow-md">
+                            <img src="../<?php echo $school_logo; ?>" alt="Logo" class="h-12 w-12 rounded-full object-cover">
+                        </div>
+                    </div>
+                    <div class="flex-1">
+                        <h3 class="text-xl font-bold" style="color: white !important;"><?php echo $school_name; ?></h3>
+                        <p class="text-white text-opacity-90 text-sm" style="color: white !important;"><?php echo $card_title; ?></p>
+                        <p class="text-white text-opacity-80 text-xs mt-1" style="color: white !important;"><?php echo $card_year; ?></p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Card Body with user details -->
+            <div class="bg-white p-5">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <h4 class="text-lg font-bold text-gray-800 mb-1"><?php echo htmlspecialchars($student['nama']); ?></h4>
+                        <p class="text-gray-500 text-sm">Kelas: <span class="font-medium text-gray-700"><?php echo htmlspecialchars($student['nama_kelas']); ?></span></p>
+                    </div>
+                    <div class="qr-placeholder">
+                        <?php if ($qr_svg !== ''): ?>
+                            <?php echo $qr_svg; ?>
+                        <?php else: ?>
+                            <span style="font-size:10px;color:#9ca3af;line-height:1.2;text-align:center;">QR<br>gagal</span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <!-- Login Details -->
+                <div class="mt-4 bg-gray-50 rounded-lg p-4">
+                    <h5 class="text-sm font-semibold text-gray-700 mb-3">Informasi Login</h5>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <p class="text-xs text-gray-500">Username</p>
+                            <p class="font-mono font-medium <?php echo $active_theme['text']; ?>"><?php echo htmlspecialchars($student['username']); ?></p>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500">Password</p>
+                            <p class="font-mono font-medium <?php echo $active_theme['text']; ?>"><?php echo htmlspecialchars($student['display_password']); ?></p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Footer note -->
+                <div class="mt-4 pt-3 border-t border-gray-100 text-center">
+                    <?php if ($app_base_url !== ''): ?>
+                    <p class="text-xs font-semibold text-gray-600" style="margin-bottom:3px;">
+                        <i class="fas fa-globe mr-1 <?php echo $active_theme['accent']; ?>"></i><?php echo htmlspecialchars(preg_replace('#^https?://#', '', $app_base_url)); ?>
+                    </p>
+                    <?php endif; ?>
+                    <p class="text-xs text-gray-500">
+                        <i class="fas fa-info-circle mr-1 <?php echo $active_theme['accent']; ?>"></i>
+                        Simpan kartu ini dan gunakan informasi di atas untuk login ke sistem ujian
+                    </p>
+                </div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
+    <script>
+        // Function to change theme color
+        function changeTheme(theme, savePreference = false) {
+            // Update all cards with the new theme
+            const cards = document.querySelectorAll('.theme-card');
+            const gradients = {
+                'blue': 'linear-gradient(135deg, #0ea5e9 0%, #0c4a6e 100%)',
+                'purple': 'linear-gradient(135deg, #8b5cf6 0%, #4c1d95 100%)',
+                'green': 'linear-gradient(135deg, #10b981 0%, #064e3b 100%)',
+                'red': 'linear-gradient(135deg, #ef4444 0%, #7f1d1d 100%)'
+            };
+            
+            const textColors = {
+                'blue': { class: 'text-primary-700', hex: '#0369a1' },
+                'purple': { class: 'text-purple-700', hex: '#7e22ce' },
+                'green': { class: 'text-green-700', hex: '#15803d' },
+                'red': { class: 'text-red-700', hex: '#b91c1c' }
+            };
+            
+            const accentColors = {
+                'blue': { class: 'text-secondary-500', hex: '#d946ef' },
+                'purple': { class: 'text-pink-500', hex: '#ec4899' },
+                'green': { class: 'text-yellow-500', hex: '#eab308' },
+                'red': { class: 'text-amber-500', hex: '#f59e0b' }
+            };
+            
+            cards.forEach(card => {
+                // Update card theme attribute
+                card.setAttribute('data-theme', theme);
+                
+                // Update gradient background
+                const headerEl = card.querySelector('.card-gradient');
+                if (headerEl) {
+                    headerEl.style.background = gradients[theme];
+                }
+                
+                // Update text colors
+                const textEls = card.querySelectorAll('.font-mono.font-medium');
+                textEls.forEach(el => {
+                    // Remove all text color classes
+                    el.classList.remove('text-primary-700', 'text-purple-700', 'text-green-700', 'text-red-700');
+                    // Add new text color class and inline style for printing
+                    el.classList.add(textColors[theme].class);
+                    el.style.color = textColors[theme].hex;
+                });
+                
+                // Update accent colors
+                const accentEls = card.querySelectorAll('.fa-info-circle');
+                accentEls.forEach(el => {
+                    // Remove all accent color classes
+                    el.classList.remove('text-secondary-500', 'text-pink-500', 'text-yellow-500', 'text-amber-500');
+                    // Add new accent color class and inline style for printing
+                    el.classList.add(accentColors[theme].class);
+                    el.style.color = accentColors[theme].hex;
+                });
+            });
+            
+            // Save preference if requested
+            if (savePreference) {
+                saveThemePreference(theme);
+            }
+        }
+        
+        // Function to save theme preference to database
+        function saveThemePreference(theme) {
+            // Create a form data object
+            const formData = new FormData();
+            formData.append('action', 'save_theme');
+            formData.append('theme', theme);
+            
+            // Send AJAX request
+            fetch('save_theme.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Show success message
+                    const saveStatus = document.getElementById('saveStatus');
+                    saveStatus.classList.remove('hidden');
+                    setTimeout(() => {
+                        saveStatus.classList.add('hidden');
+                    }, 2000);
+                }
+            })
+            .catch(error => {
+                console.error('Error saving theme preference:', error);
+            });
+        }
+        
+        // Initialize with default theme
+        document.addEventListener('DOMContentLoaded', function() {
+            const defaultTheme = '<?php echo $card_color; ?>';
+            changeTheme(defaultTheme);
+        });
+        
+        // Function to print with current theme
+        function printWithCurrentTheme() {
+            // Short delay to ensure theme changes are applied
+            setTimeout(() => {
+                window.print();
+            }, 300);
+        }
+    </script>
+    
+    <!-- Add some visual flair with a decorative element -->
+    <div class="no-print fixed bottom-0 right-0 w-64 h-64 -mb-16 -mr-16 rounded-full bg-gradient-to-r from-blue-100 to-purple-100 opacity-30 z-0"></div>
+    <div class="no-print fixed top-0 left-0 w-96 h-96 -mt-48 -ml-48 rounded-full bg-gradient-to-r from-green-100 to-yellow-100 opacity-20 z-0"></div>
+    <?php include_once '../shared/footer.php'; ?>
+</body>
+</html>

@@ -1,0 +1,92 @@
+/* Mobile Menu Styles */
+
+/* Hide mobile menu toggle on desktop */
+.mobile-menu-toggle {
+    display: none;
+}
+
+/* Mobile menu container - hidden by default */
+.mobile-menu {
+    display: none;
+}
+
+/* Media query for mobile devices */
+@media (max-width: 768px) {
+    /* Show mobile menu toggle on mobile */
+    .mobile-menu-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        padding: 0.5rem;
+        margin-right: 0.5rem;
+        color: #4b5563;
+    }
+    
+    /* Hide desktop sidebar on mobile */
+    .desktop-sidebar {
+        display: none;
+    }
+    
+    /* Mobile menu styling */
+    .mobile-menu {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 80%;
+        max-width: 300px;
+        height: 100vh;
+        background-color: white;
+        z-index: 50;
+        box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1);
+        overflow-y: auto;
+        transition: transform 0.3s ease;
+        transform: translateX(-100%);
+    }
+    
+    /* When mobile menu is active */
+    .mobile-menu.active {
+        display: block;
+        transform: translateX(0);
+    }
+    
+    /* Overlay when mobile menu is open */
+    .mobile-menu-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100vh;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 40;
+    }
+    
+    .mobile-menu-overlay.active {
+        display: block;
+    }
+    
+    /* Adjust main content when menu is open */
+    .main-content {
+        transition: margin-left 0.3s ease;
+    }
+    
+    /* User dropdown adjustments for mobile */
+    #userDropdown {
+        position: absolute;
+        right: 0;
+        width: 200px;
+    }
+    
+    /* Make action buttons stack on mobile */
+    .action-buttons {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    /* Adjust table for mobile */
+    .overflow-x-auto {
+        max-width: 100vw;
+    }
+}

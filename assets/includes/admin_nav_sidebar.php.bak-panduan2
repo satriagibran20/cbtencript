@@ -1,0 +1,225 @@
+<?php
+$current_page = basename($_SERVER['PHP_SELF']);
+
+// Check Redis status (safe check if class exists)
+$redis_enabled = false;
+if (class_exists('RedisCache')) {
+    $redis_enabled = RedisCache::isEnabled();
+}
+?>
+<!-- Navigation -->
+<nav class="bg-white shadow-lg">
+    <div class="max-w-7xl mx-auto px-4">
+        <div class="flex justify-between h-16">
+            <div class="flex items-center">
+                <!-- Mobile menu toggle -->
+                <button id="mobileMenuToggle" class="mobile-menu-toggle">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+                
+                <img src="../<?php echo getSetting('app_logo', 'assets/img/logo.png'); ?>" alt="Logo" class="h-8 w-8 mr-3">
+                <a href="dashboard.php"><span class="font-semibold text-gray-900"><?php echo getSetting('app_name', 'CBT SMK'); ?></span></a>
+           
+            </div>
+           
+            <div class="flex items-center space-x-4">      
+                <!-- Redis Status Indicator -->
+                <div class="relative group">
+                    <div class="flex items-center space-x-2 px-3 py-2 rounded-lg <?php echo $redis_enabled ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'; ?>" title="<?php echo $redis_enabled ? 'Redis: Aktif' : 'Redis: Tidak Aktif'; ?>">
+                        <i class="fas fa-circle text-xs <?php echo $redis_enabled ? 'text-green-500 animate-pulse' : 'text-gray-400'; ?>"></i>
+                        <span class="text-sm font-medium">Redis</span>
+                        <span class="text-xs <?php echo $redis_enabled ? 'text-green-600' : 'text-gray-500'; ?>">
+                            <?php echo $redis_enabled ? 'ON' : 'OFF'; ?>
+                        </span>
+                    </div>
+                    <!-- Tooltip -->
+                    <div class="absolute right-0 mt-2 w-48 bg-gray-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                        <div class="font-semibold mb-1">Status Redis</div>
+                        <div class="text-gray-300">
+                            <?php if ($redis_enabled): ?>
+                                <div class="flex items-center">
+                                    <i class="fas fa-check-circle text-green-400 mr-2"></i>
+                                    <span>Redis aktif dan berfungsi</span>
+                                </div>
+                                <div class="mt-1 text-xs text-gray-400">
+                                    Session & Cache menggunakan Redis
+                                </div>
+                            <?php else: ?>
+                                <div class="flex items-center">
+                                    <i class="fas fa-times-circle text-red-400 mr-2"></i>
+                                    <span>Redis tidak tersedia</span>
+                                </div>
+                                <div class="mt-1 text-xs text-gray-400">
+                                    Menggunakan file-based session
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="relative">
+                    <button onclick="toggleUserMenu()" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900">
+                        <i class="fas fa-user-circle text-2xl"></i>
+                        <span><?php echo $_SESSION['nama']; ?></span>
+                        <i class="fas fa-chevron-down text-sm"></i>
+                    </button>
+                    
+                    <div id="userDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50">
+                        <a href="profile.php" class="block px-4 py-2 text-gray-800 hover:bg-gray-50">
+                            <i class="fas fa-user mr-2"></i>Profil
+                        </a>
+                        <a href="settings.php" class="block px-4 py-2 text-gray-800 hover:bg-gray-50">
+                            <i class="fas fa-cog mr-2"></i>Pengaturan
+                        </a>
+                        <hr class="my-1">
+                        <a href="../logout.php" class="block px-4 py-2 text-red-600 hover:bg-red-50">
+                            <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<!-- Mobile Menu Overlay -->
+<div id="mobileMenuOverlay" class="mobile-menu-overlay"></div>
+
+<!-- Mobile Menu -->
+<div id="mobileMenu" class="mobile-menu">
+    <div class="p-4 border-b flex justify-between items-center">
+        <h2 class="text-lg font-semibold text-gray-900">Menu Admin</h2>
+        <button id="mobileMenuClose" class="text-gray-500 hover:text-gray-700">
+            <i class="fas fa-times text-xl"></i>
+        </button>
+    </div>
+    <div class="p-4">
+        <nav class="space-y-2">
+            <a href="changelog.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'changelog.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-history mr-3"></i>Changelog
+            </a>
+            <a href="dashboard.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'dashboard.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+            </a>
+            <a href="users.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'users.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-users mr-3"></i>Kelola Peserta
+            </a>
+            <a href="classes.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'classes.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg transition-colors">
+                <i class="fas fa-school mr-3 w-5"></i>Kelola Kelas
+            </a>                
+            <a href="subjects.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'subjects.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-book mr-3"></i>Mata Pelajaran
+            </a>
+            <a href="bank_soal.php" class="flex items-center px-4 py-2 <?php echo in_array($current_page, ['bank_soal.php','bank_soal_detail.php','questions.php'], true) ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-database mr-3"></i>Bank Soal
+            </a>
+            <a href="exams.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'exams.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-clipboard-list mr-3"></i>Kelola Ujian
+            </a>
+            <a href="results.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'results.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-chart-bar mr-3"></i>Hasil Ujian
+            </a>
+            <a href="leger_nilai.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'leger_nilai.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-file-excel mr-3"></i>Leger Nilai
+            </a>
+            <a href="tokens.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tokens.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-key mr-3"></i>Kelola Token
+            </a>
+            <a href="cetak-kartu.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'cetak-kartu.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-address-book mr-3"></i>Cetak kartu
+            </a>
+            <a href="monitoring.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'monitoring.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-eye mr-3"></i>Monitoring
+            </a>
+            <a href="announcements.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'announcements.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-bullhorn mr-3"></i>Pengumuman
+            </a>
+            <a href="settings.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'settings.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-cog mr-3"></i>Pengaturan
+            </a>
+            <a href="license.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'license.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-certificate mr-3"></i>Lisensi
+            </a>
+            <a href="tickets.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tickets.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+            </a>
+        </nav>
+    </div>
+</div>
+
+<div class="flex">
+    <!-- Desktop Sidebar -->
+    <div class="w-64 bg-white shadow-lg desktop-sidebar">
+        <div class="p-4">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Menu Admin</h2>
+            <nav class="space-y-2">
+                <a href="changelog.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'changelog.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-history mr-3"></i>Changelog
+                </a>
+                <a href="dashboard.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'dashboard.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+                </a>
+                <a href="users.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'users.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-users mr-3"></i>Kelola Peserta
+                </a>
+                <a href="classes.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'classes.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-school mr-3"></i>Kelola Kelas
+                </a>
+                <a href="subjects.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'subjects.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-book mr-3"></i>Mata Pelajaran
+                </a>
+                <a href="bank_soal.php" class="flex items-center px-4 py-2 <?php echo in_array($current_page, ['bank_soal.php','bank_soal_detail.php','questions.php'], true) ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-database mr-3"></i>Bank Soal
+                </a>
+                <a href="exams.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'exams.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-clipboard-list mr-3"></i>Kelola Ujian
+                </a>
+                <a href="results.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'results.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-chart-bar mr-3"></i>Hasil Ujian
+                </a>
+                <a href="leger_nilai.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'leger_nilai.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-file-excel mr-3"></i>Leger Nilai
+                </a>
+                <a href="tokens.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tokens.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-key mr-3"></i>Kelola Token
+                </a>
+                <a href="cetak-kartu.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'cetak-kartu.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-address-book mr-3"></i>Cetak kartu
+                </a>
+                <a href="monitoring.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'monitoring.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-eye mr-3"></i>Monitoring
+                </a>
+                <a href="announcements.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'announcements.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-bullhorn mr-3"></i>Pengumuman
+                </a>
+                <a href="settings.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'settings.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-cog mr-3"></i>Pengaturan
+                </a>
+                <a href="license.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'license.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-certificate mr-3"></i>Lisensi
+                </a>
+                <a href="tickets.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tickets.php' ? 'text-blue-600 bg-blue-50' : 'text-gray-700 hover:bg-gray-50'; ?> rounded-lg">
+                    <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+                </a>
+            </nav>
+        </div>
+    </div>
+
+<script>
+    // Fallback untuk halaman yang tidak mendefinisikan toggleUserMenu sendiri.
+    // Halaman yang punya definisi sendiri akan menimpanya (dideklarasikan setelah ini).
+    if (typeof window.toggleUserMenu !== 'function') {
+        window.toggleUserMenu = function () {
+            var d = document.getElementById('userDropdown');
+            if (d) d.classList.toggle('hidden');
+        };
+    }
+    document.addEventListener('click', function (e) {
+        var d = document.getElementById('userDropdown');
+        if (!d || d.classList.contains('hidden')) return;
+        if (!e.target.closest('#userDropdown') &&
+            !e.target.closest('button[onclick*="toggleUserMenu"]')) {
+            d.classList.add('hidden');
+        }
+    });
+</script>

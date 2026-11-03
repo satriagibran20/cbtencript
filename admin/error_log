@@ -1,0 +1,22 @@
+[22-Jun-2025 18:03:19 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Call to undefined function updateSetting() in /home/zwonkdxy/payment.nvteam.web.id/admin/settings.php:22
+Stack trace:
+#0 {main}
+  thrown in /home/zwonkdxy/payment.nvteam.web.id/admin/settings.php on line 22
+[22-Jun-2025 18:03:28 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Call to undefined function updateSetting() in /home/zwonkdxy/payment.nvteam.web.id/admin/settings.php:22
+Stack trace:
+#0 {main}
+  thrown in /home/zwonkdxy/payment.nvteam.web.id/admin/settings.php on line 22
+[22-Jun-2025 18:03:44 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Call to undefined function updateSetting() in /home/zwonkdxy/payment.nvteam.web.id/admin/settings.php:22
+Stack trace:
+#0 {main}
+  thrown in /home/zwonkdxy/payment.nvteam.web.id/admin/settings.php on line 22
+[24-Jun-2025 04:57:31 Asia/Jakarta] PHP Fatal error:  Uncaught Error: Call to undefined function updateSetting() in /home/zwonkdxy/cbt.nvteam.web.id/admin/settings.php:22
+Stack trace:
+#0 {main}
+  thrown in /home/zwonkdxy/cbt.nvteam.web.id/admin/settings.php on line 22
+[24-Nov-2025 16:39:45 Asia/Jakarta] PHP Notice:  Undefined variable: current_page in /home/nvteambi/docs.spillbot.web.id/admin/dashboard.php on line 134
+[24-Nov-2025 16:53:20 Asia/Jakarta] PHP Notice:  Undefined variable: current_page in /home/nvteambi/docs.spillbot.web.id/admin/dashboard.php on line 134
+[24-Nov-2025 16:53:23 Asia/Jakarta] PHP Notice:  Undefined variable: current_page in /home/nvteambi/docs.spillbot.web.id/admin/exams.php on line 286
+[24-Nov-2025 16:53:28 Asia/Jakarta] PHP Notice:  Undefined variable: current_page in /home/nvteambi/docs.spillbot.web.id/admin/exams.php on line 286
+[24-Nov-2025 16:53:31 Asia/Jakarta] PHP Notice:  Undefined variable: current_page in /home/nvteambi/docs.spillbot.web.id/admin/dashboard.php on line 134
+[24-Nov-2025 17:13:16 Asia/Jakarta] PHP Notice:  Undefined variable: current_page in /home/nvteambi/docs.spillbot.web.id/admin/dashboard.php on line 134

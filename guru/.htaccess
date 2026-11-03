@@ -1,0 +1,20 @@
+# Redirect empty directory access to dashboard.php
+DirectoryIndex dashboard.php
+
+# Prevent directory listing
+Options -Indexes
+
+# Protect .htaccess file
+<Files .htaccess>
+Order Allow,Deny
+Deny from all
+</Files>
+
+# Redirect access to empty folders (admin, guru, peserta) to dashboard.php
+RewriteEngine On
+
+# Custom 404 error page
+ErrorDocument 404 /404.php
+
+# If the request is exactly to /admin/, /guru/, or /peserta/
+RewriteRule ^(guru)/?$ /dashboard.php [L]

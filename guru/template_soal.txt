@@ -1,0 +1,4 @@
+No	Soal	Pilihan A	Pilihan B	Pilihan C	Pilihan D	Jawaban Benar	Kelas	file1	file2	fileA	fileB	fileC	fileD
+1	Pertanyaan pertama	Jawaban A1	Jawaban B1	Jawaban C1	Jawaban D1	A	10						
+2	Pertanyaan kedua	Jawaban A2	Jawaban B2	Jawaban C2	Jawaban D2	B	11						
+3	Pertanyaan ketiga	Jawaban A3	Jawaban B3	Jawaban C3	Jawaban D3	C	12						

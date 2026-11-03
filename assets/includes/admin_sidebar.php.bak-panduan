@@ -1,0 +1,131 @@
+<?php
+$current_page = basename($_SERVER['PHP_SELF']);
+?>
+
+<!-- Mobile Menu Overlay -->
+<div id="mobile-menu-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-40 hidden md:hidden transition-opacity duration-300"></div>
+
+<!-- Mobile Sidebar -->
+<div id="mobile-sidebar" class="fixed inset-y-0 left-0 z-50 w-64 bg-black shadow-xl transform -translate-x-full transition-transform duration-300 ease-in-out md:hidden">
+    <div class="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-900">
+        <h2 class="text-lg font-semibold text-white">Menu Admin</h2>
+        <button id="mobile-menu-close" class="text-gray-300 hover:text-white focus:outline-none p-1 rounded-full hover:bg-gray-800 transition-colors">
+            <i class="fas fa-times text-xl"></i>
+        </button>
+    </div>
+    <div class="p-4 overflow-y-auto" style="height: calc(100vh - 80px);">
+        <nav class="space-y-2">
+            <a href="dashboard.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'dashboard.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-tachometer-alt mr-3 w-5"></i>Dashboard
+            </a>
+            <a href="users.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'users.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-users mr-3 w-5"></i>Kelola Peserta
+            </a>
+            <a href="classes.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'classes.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-school mr-3 w-5"></i>Kelola Kelas
+            </a>
+            <a href="subjects.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'subjects.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-book mr-3 w-5"></i>Mata Pelajaran
+            </a>
+            <a href="questions.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'questions.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-question-circle mr-3 w-5"></i>Kelola Soal
+            </a>
+            <a href="bank_soal.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'bank_soal.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-database mr-3 w-5"></i>Bank Soal
+            </a>
+            <a href="exams.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'exams.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-clipboard-list mr-3 w-5"></i>Kelola Ujian
+            </a>
+            <a href="results.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'results.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-chart-bar mr-3 w-5"></i>Hasil Ujian
+            </a>
+            <a href="leger_nilai.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'leger_nilai.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-file-excel mr-3 w-5"></i>Leger Nilai
+            </a>
+            <a href="tokens.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'tokens.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-key mr-3 w-5"></i>Kelola Token
+            </a>
+            <a href="cetak-kartu.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'cetak-kartu.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-address-book mr-3 w-5"></i>Cetak Kartu
+            </a>
+            <a href="monitoring.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'monitoring.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-eye mr-3 w-5"></i>Monitoring
+            </a>
+            <a href="announcements.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'announcements.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-bullhorn mr-3 w-5"></i>Pengumuman
+            </a>
+            <a href="tickets.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'tickets.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-ticket-alt mr-3 w-5"></i>Tiket
+            </a>
+            <a href="changelog.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'changelog.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-history mr-3 w-5"></i>Changelog
+            </a>
+            <a href="settings.php" class="flex items-center px-4 py-3 <?php echo $current_page == 'settings.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-cog mr-3 w-5"></i>Pengaturan
+            </a>
+            <a href="tickets.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tickets.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+            </a>
+        </nav>
+    </div>
+</div>
+
+<!-- Desktop Sidebar -->
+<div class="hidden md:block w-64 bg-black shadow-lg min-h-screen">
+    <div class="p-4">
+        <h2 class="text-lg font-semibold text-white mb-4">Menu Admin</h2>
+        <nav class="space-y-2">
+            <a href="dashboard.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'dashboard.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+            </a>
+            <a href="users.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'users.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-users mr-3"></i>Kelola Peserta
+            </a>
+            <a href="classes.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'classes.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-school mr-3"></i>Kelola Kelas
+            </a>
+            <a href="subjects.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'subjects.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-book mr-3"></i>Mata Pelajaran
+            </a>
+            <a href="questions.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'questions.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-question-circle mr-3"></i>Kelola Soal
+            </a>
+            <a href="bank_soal.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'bank_soal.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-database mr-3"></i>Bank Soal
+            </a>
+            <a href="exams.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'exams.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-clipboard-list mr-3"></i>Kelola Ujian
+            </a>
+            <a href="results.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'results.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-chart-bar mr-3"></i>Hasil Ujian
+            </a>
+            <a href="leger_nilai.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'leger_nilai.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-file-excel mr-3"></i>Leger Nilai
+            </a>
+            <a href="tokens.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tokens.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-key mr-3"></i>Kelola Token
+            </a>
+            <a href="cetak-kartu.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'cetak-kartu.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-address-book mr-3"></i>Cetak Kartu
+            </a>
+            <a href="monitoring.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'monitoring.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-eye mr-3"></i>Monitoring
+            </a>
+            <a href="announcements.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'announcements.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-bullhorn mr-3"></i>Pengumuman
+            </a>
+            <a href="tickets.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tickets.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket
+            </a>
+            <a href="changelog.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'changelog.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-history mr-3"></i>Changelog
+            </a>
+            <a href="settings.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'settings.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-cog mr-3"></i>Pengaturan
+            </a>
+            <a href="tickets.php" class="flex items-center px-4 py-2 <?php echo $current_page == 'tickets.php' ? 'text-white bg-gray-800' : 'text-gray-300 hover:bg-gray-800'; ?> rounded-lg transition-colors">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+            </a>
+        </nav>
+    </div>
+</div>

@@ -1,0 +1,276 @@
+<?php
+require_once '../config/config.php';
+requireRole('peserta');
+
+$db = new Database();
+$conn = $db->getConnection();
+
+// Get student's exam results
+$query = "SELECT er.*, e.judul, e.durasi, e.bobot_total, s.nama as subject_name, u.nama as guru_name
+          FROM exam_results er 
+          JOIN exams e ON er.exam_id = e.id 
+          JOIN subjects s ON e.subject_id = s.id 
+          JOIN users u ON s.guru_id = u.id 
+          WHERE er.user_id = ? 
+          ORDER BY er.created_at DESC";
+$stmt = $conn->prepare($query);
+$stmt->execute([$_SESSION['user_id']]);
+$results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get statistics
+$total_exams = count($results);
+$completed_exams = count(array_filter($results, function($r) { return $r['status'] === 'selesai'; }));
+$average_score = $total_exams > 0 ? array_sum(array_column($results, 'nilai')) / $total_exams : 0;
+?>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hasil Ujian - <?php echo getSetting('app_name', 'CBT SMK'); ?></title>
+    <link rel="icon" type="image/x-icon" href="../<?php echo getSetting('app_favicon', 'assets/img/favicon.ico'); ?>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="../assets/css/mobile-menu.css" rel="stylesheet">
+    <link href="../assets/css/admin-style.css?v=20261101a" rel="stylesheet">
+    <link href="../assets/css/table-style.css" rel="stylesheet">
+    <link href="../assets/css/ui-components.css" rel="stylesheet">
+    <script src="../assets/js/mobile-menu.js" defer></script>
+    <script src="../assets/js/admin-script.js" defer></script>
+    <script src="../assets/js/table-script.js" defer></script>
+</head>
+<body class="bg-gray-50 overflow-x-hidden">
+    <!-- Navigation -->
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <!-- Mobile menu toggle -->
+                    <button id="mobileMenuToggle" class="mobile-menu-toggle">
+                        <i class="fas fa-bars text-xl"></i>
+                    </button>
+                    <img src="../<?php echo getSetting('app_logo', 'assets/img/logo.png'); ?>" alt="Logo" class="h-8 w-8 mr-3">
+                    <a href="dashboard.php"><span class="font-semibold text-gray-900"><?php echo getSetting('app_name', 'CBT SMK'); ?></span></a>
+                </div>
+                
+                <div class="flex items-center space-x-4">
+                    <div class="relative">
+                        <button onclick="toggleUserMenu()" class="flex items-center space-x-2 text-gray-700 hover:text-gray-900">
+                            <?php if(isset($_SESSION['photo']) && !empty($_SESSION['photo'])): ?>
+                            <img src="../<?php echo $_SESSION['photo']; ?>" alt="Profile" class="h-8 w-8 rounded-full object-cover">
+                            <?php else: ?>
+                            <i class="fas fa-user-circle text-2xl"></i>
+                            <?php endif; ?>
+                            <span class="hidden md:inline"><?php echo $_SESSION['nama']; ?></span>
+                            <i class="fas fa-chevron-down text-sm"></i>
+                        </button>
+                        
+                        <div id="userDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border z-50">
+                            <a href="profile.php" class="block px-4 py-2 text-gray-800 hover:bg-gray-50">
+                                <i class="fas fa-user mr-2"></i>Profil
+                            </a>
+                            <hr class="my-1">
+                            <a href="../logout.php" class="block px-4 py-2 text-red-600 hover:bg-red-50">
+                                <i class="fas fa-sign-out-alt mr-2"></i>Logout
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobileMenuOverlay" class="mobile-menu-overlay"></div>
+    
+    <!-- Mobile Menu -->
+    <div id="mobileMenu" class="mobile-menu">
+        <div class="p-4 border-b flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-900">Menu Siswa</h2>
+            <button id="mobileMenuClose" class="text-gray-500 hover:text-gray-700">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        <div class="p-4">
+            <nav class="space-y-2">
+                <a href="changelog.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                    <i class="fas fa-history mr-3"></i>Changelog
+                </a>
+                <a href="dashboard.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                    <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+                </a>
+                <a href="results.php" class="flex items-center px-4 py-2 text-blue-600 bg-blue-50 rounded-lg">
+                    <i class="fas fa-history mr-3"></i>Riwayat Ujian
+                </a>
+                <a href="tickets.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+                </a>
+                <a href="report.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                 <i class="fas fa-bug mr-3"></i>Saran dan Report Bug
+                </a>
+            </nav>
+        </div>
+    </div>
+
+    <div class="flex">
+        <!-- Desktop Sidebar -->
+        <div class="w-64 bg-white shadow-lg min-h-screen desktop-sidebar">
+            <div class="p-4">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4">Menu Siswa</h2>
+                <nav class="space-y-2">
+                    <a href="changelog.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                    <i class="fas fa-history mr-3"></i>Changelog
+                    </a>
+                    <a href="dashboard.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                        <i class="fas fa-tachometer-alt mr-3"></i>Dashboard
+                    </a>
+                    <a href="results.php" class="flex items-center px-4 py-2 text-blue-600 bg-blue-50 rounded-lg">
+                        <i class="fas fa-history mr-3"></i>Riwayat Ujian
+                    </a>
+                    <a href="tickets.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                <i class="fas fa-ticket-alt mr-3"></i>Tiket Bantuan
+                </a>
+                <a href="report.php" class="flex items-center px-4 py-2 text-gray-700 hover:bg-gray-50 rounded-lg">
+                 <i class="fas fa-bug mr-3"></i>Saran dan Report Bug
+                </a>
+                </nav>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="flex-1 p-4 md:p-6 main-content w-full overflow-x-hidden">
+            <!-- Header -->
+            <div class="mb-8">
+                <h1 class="text-3xl font-bold text-gray-900">Hasil Ujian</h1>
+                <p class="text-gray-600">Riwayat dan statistik hasil ujian Anda</p>
+            </div>
+
+            <!-- Statistics Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-blue-100 rounded-full">
+                            <i class="fas fa-clipboard-list text-blue-600 text-xl"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-600">Total Ujian</p>
+                            <p class="text-2xl font-bold text-gray-900"><?php echo $total_exams; ?></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow p-6">
+                    <div class="flex items-center">
+                        <div class="p-3 bg-green-100 rounded-full">
+                            <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                        </div>
+                        <div class="ml-4">
+                            <p class="text-sm font-medium text-gray-600">Ujian Selesai</p>
+                            <p class="text-2xl font-bold text-gray-900"><?php echo $completed_exams; ?></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Results List -->
+                <div class="lg:col-span-2">
+                    <div class="bg-white rounded-lg shadow">
+                        <div class="px-6 py-4 border-b border-gray-200">
+                            <h3 class="text-lg font-semibold text-gray-900">Riwayat Ujian</h3>
+                        </div>
+                        
+                        <div class="divide-y divide-gray-200">
+                            <?php if (empty($results)) : ?>
+                            <div class="p-8 text-center">
+                                <i class="fas fa-clipboard text-4xl text-gray-400 mb-4"></i>
+                                <h3 class="text-lg font-medium text-gray-900 mb-2">Belum Ada Hasil Ujian</h3>
+                                <p class="text-gray-600">Anda belum mengikuti ujian apapun</p>
+                            </div>
+                            <?php else : ?>
+                            <?php foreach ($results as $result) : ?>
+                            <div class="p-6 hover:bg-gray-50">
+                                <div class="flex justify-between items-start">
+                                    <div class="flex-1">
+                                        <h4 class="text-lg font-semibold text-gray-900 mb-1"><?php echo htmlspecialchars($result['judul']); ?></h4>
+                                        <p class="text-gray-600 mb-2"><?php echo htmlspecialchars($result['subject_name']); ?> - <?php echo htmlspecialchars($result['guru_name']); ?></p>
+                                        
+                                        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 text-sm">
+                                            <!-- Informasi benar/salah dihapus -->
+                                            <div>
+                                                <span class="text-gray-500">Durasi:</span>
+                                                <span class="font-medium text-gray-900 ml-1"><?php echo $result['durasi']; ?> menit</span>
+                                            </div>
+                                            <div>
+                                                <span class="text-gray-500">Status:</span>
+                                                <span class="font-medium <?php echo $result['status'] === 'selesai' ? 'text-green-600' : 'text-yellow-600'; ?> ml-1">
+                                                    <?php echo ucfirst($result['status']); ?>
+                                                </span>
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="text-xs text-gray-500">
+                                            <?php if ($result['waktu_mulai']) : ?>
+                                            Mulai: <?php 
+                                                $waktu_mulai = new DateTime($result['waktu_mulai']);
+                                                $waktu_mulai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                                echo $waktu_mulai->format('d/m/Y H:i');
+                                            ?>
+                                            <?php endif; ?>
+                                            <?php if ($result['waktu_selesai']) : ?>
+                                            • Selesai: <?php 
+                                                $waktu_selesai = new DateTime($result['waktu_selesai']);
+                                                $waktu_selesai->setTimezone(new DateTimeZone('Asia/Jakarta'));
+                                                echo $waktu_selesai->format('d/m/Y H:i');
+                                            ?>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="ml-6 text-right">
+                                        <!-- Nilai tidak ditampilkan sesuai permintaan -->
+                                        <div class="text-sm text-gray-500 mt-2">Ujian selesai</div>
+                                        <div class="mt-2">
+                                            <span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+                                                Selesai
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kolom kosong untuk menjaga layout -->
+                <div class="lg:col-span-1">
+                    <div class="bg-white rounded-lg shadow p-6">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-4">Informasi</h3>
+                        <p class="text-gray-600">Hasil ujian Anda telah disimpan dalam sistem.</p>
+                        <p class="text-gray-600 mt-2">Hubungi guru mata pelajaran untuk informasi lebih lanjut.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleUserMenu() {
+            const dropdown = document.getElementById('userDropdown');
+            dropdown.classList.toggle('hidden');
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(event) {
+            const userDropdown = document.getElementById('userDropdown');
+            if (!event.target.closest('.relative')) {
+                userDropdown.classList.add('hidden');
+            }
+        });
+    </script>
+</body>
+</html>

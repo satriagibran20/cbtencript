@@ -1,0 +1,14 @@
+# Redirect empty directory access to dashboard.php
+DirectoryIndex dashboard.php
+
+# Prevent directory listing
+Options -Indexes
+
+# Protect .htaccess file
+<Files .htaccess>
+Order Allow,Deny
+Deny from all
+</Files>
+
+# Custom 404 error page
+ErrorDocument 404 /404.php

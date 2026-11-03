@@ -1,0 +1,1712 @@
+<?php
+require_once 'config/config.php';
+
+// Redirect if already logged in
+if (isLoggedIn()) {
+    $role = $_SESSION['role'];
+    switch ($role) {
+        case 'admin':
+            header('Location: admin/dashboard.php');
+            break;
+        case 'guru':
+            header('Location: guru/dashboard.php');
+            break;
+        case 'peserta':
+            header('Location: peserta/dashboard.php');
+            break;
+        default:
+            header('Location: login.php');
+    }
+    exit();
+}
+
+// Maintenance mode
+if (getSetting('maintenance_mode', '0') === '1') {
+    header('Location: maintenance');
+    exit();
+}
+
+// ---------------------------------------------------------------------------
+// Angka ringkas untuk halaman publik.
+// Dibungkus try/catch supaya landing page tetap tampil walau DB bermasalah,
+// dan di-cache 5 menit agar tidak menambah beban pada setiap kunjungan.
+// ---------------------------------------------------------------------------
+$siteStats = ['soal' => 0, 'ujian' => 0, 'peserta' => 0, 'mapel' => 0];
+try {
+    $cachedStats = RedisCache::get('landing:stats');
+    if (is_array($cachedStats) && isset($cachedStats['soal'])) {
+        $siteStats = $cachedStats;
+    } else {
+        $db = new Database();
+        $conn = $db->getConnection();
+
+        $siteStats['soal']  = (int) $conn->query("SELECT COUNT(*) FROM questions")->fetchColumn();
+        $siteStats['ujian'] = (int) $conn->query("SELECT COUNT(*) FROM exams")->fetchColumn();
+        $siteStats['mapel'] = (int) $conn->query("SELECT COUNT(*) FROM subjects")->fetchColumn();
+        $siteStats['peserta'] = (int) $conn->query(
+            "SELECT COUNT(*) FROM users u
+             JOIN roles r ON r.id = u.role_id
+             WHERE r.nama = 'peserta'"
+        )->fetchColumn();
+
+        RedisCache::set('landing:stats', $siteStats, 300);
+    }
+} catch (Exception $e) {
+    // biarkan nilai default 0
+}
+
+$appName  = getSetting('app_name', 'CBT');
+$appLogo  = getSetting('app_logo', 'assets/img/logo.png');
+$appFav   = getSetting('app_favicon', 'assets/img/favicon.png');
+$appYear  = getSetting('academic_year', '');
+
+if (!function_exists('h')) {
+    function h($v) { return htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8'); }
+}
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo h($appName); ?> — Sistem Ujian Berbasis Komputer</title>
+    <meta name="description" content="Platform ujian berbasis komputer (CBT) untuk olimpiade dan seleksi akademik: token ujian, anti-kecurangan, monitoring real-time, dan penilaian otomatis termasuk soal esai.">
+    <meta name="theme-color" content="#5b5bd6">
+
+    <link rel="icon" type="image/x-icon" href="<?php echo h($appFav); ?>">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+    <script>document.documentElement.classList.add('js');</script>
+
+    <style>
+        /* ==========================================================
+           Landing page — memakai token desain yang sama dengan
+           app-theme.css (indigo #5b5bd6, Inter/Plus Jakarta Sans,
+           border #e8eaf1, radius 16px) agar terasa satu produk.
+           ========================================================== */
+        :root {
+            --ink: #0f172a;
+            --muted: #64748b;
+            --subtle: #94a3b8;
+            --line: #e8eaf1;
+            --bg: #f6f7fb;
+            --surface: #ffffff;
+            --primary: #5b5bd6;
+            --primary-2: #6366f1;
+            --primary-soft: #eef0ff;
+            --radius: 16px;
+            --shadow-sm: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px -20px rgba(16, 24, 40, .40);
+            --shadow-md: 0 1px 2px rgba(16, 24, 40, .04), 0 20px 44px -30px rgba(16, 24, 40, .48);
+            --shadow-lg: 0 34px 80px -34px rgba(15, 23, 42, .38);
+            --maxw: 1160px;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; scroll-padding-top: 88px; }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(1100px 520px at 8% -8%, rgba(99, 102, 241, .12), transparent 62%),
+                radial-gradient(900px 480px at 100% 2%, rgba(139, 92, 246, .09), transparent 58%),
+                var(--bg);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overflow-x: hidden;
+        }
+
+        h1, h2, h3, h4 {
+            font-family: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+            margin: 0;
+            letter-spacing: -.025em;
+        }
+
+        p { margin: 0; }
+        a { color: inherit; text-decoration: none; }
+        img { display: block; max-width: 100%; }
+
+        .wrap {
+            width: 100%;
+            max-width: var(--maxw);
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* ---------------- Buttons ---------------- */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: .55rem;
+            font-family: inherit;
+            font-size: .93rem;
+            font-weight: 600;
+            line-height: 1.2;
+            border-radius: 11px;
+            padding: .72rem 1.15rem;
+            border: 1px solid transparent;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: transform .18s ease, box-shadow .18s ease, filter .18s ease,
+                        border-color .18s ease, color .18s ease, background .18s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(180deg, #6366f1, #5557d8);
+            color: #fff;
+            box-shadow: 0 10px 22px -12px rgba(99, 102, 241, .85);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.06);
+            box-shadow: 0 16px 30px -14px rgba(99, 102, 241, .90);
+        }
+
+        .btn-ghost {
+            background: #fff;
+            color: #3f4254;
+            border-color: var(--line);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-ghost:hover {
+            border-color: #c9cdf0;
+            color: var(--primary);
+            transform: translateY(-1px);
+        }
+
+        .btn-lg { padding: .95rem 1.55rem; font-size: 1rem; border-radius: 12px; }
+
+        /* ---------------- Header ---------------- */
+        .site-header {
+            position: sticky;
+            top: 0;
+            z-index: 60;
+            background: rgba(255, 255, 255, .82);
+            backdrop-filter: saturate(180%) blur(14px);
+            -webkit-backdrop-filter: saturate(180%) blur(14px);
+            border-bottom: 1px solid transparent;
+            transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+        }
+
+        .site-header.is-stuck {
+            background: rgba(255, 255, 255, .94);
+            border-bottom-color: var(--line);
+            box-shadow: 0 1px 0 rgba(16, 24, 40, .02), 0 8px 24px -22px rgba(16, 24, 40, .5);
+        }
+
+        .nav-inner {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            height: 68px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            min-width: 0;
+        }
+
+        .brand img {
+            width: 36px;
+            height: 36px;
+            border-radius: 9px;
+            object-fit: contain;
+            flex: none;
+        }
+
+        .brand-text { display: flex; flex-direction: column; min-width: 0; }
+
+        .brand-text strong {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: .95rem;
+            font-weight: 800;
+            letter-spacing: -.02em;
+            line-height: 1.15;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .brand-text small {
+            font-size: .68rem;
+            color: var(--subtle);
+            letter-spacing: .04em;
+            text-transform: uppercase;
+            font-weight: 600;
+            line-height: 1.3;
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: auto;
+        }
+
+        .nav-links a {
+            font-size: .875rem;
+            font-weight: 500;
+            color: #475569;
+            padding: .5rem .72rem;
+            border-radius: 9px;
+            transition: background .15s ease, color .15s ease;
+        }
+
+        .nav-links a:hover { background: #f1f3fa; color: var(--ink); }
+
+        .nav-actions { display: flex; align-items: center; gap: 10px; }
+
+        .nav-toggle {
+            display: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #fff;
+            color: #475569;
+            font-size: 1rem;
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .nav-mobile {
+            display: none;
+            border-top: 1px solid var(--line);
+            background: #fff;
+            padding: 10px 24px 18px;
+        }
+
+        .nav-mobile a {
+            display: block;
+            padding: .7rem .25rem;
+            font-size: .9rem;
+            font-weight: 500;
+            color: #475569;
+            border-bottom: 1px solid #f2f4fa;
+        }
+
+        .nav-mobile a:last-child { border-bottom: 0; }
+
+        /* ---------------- Hero ---------------- */
+        .hero { padding: 64px 0 52px; }
+
+        .hero-grid {
+            display: grid;
+            grid-template-columns: 1.12fr .88fr;
+            gap: 56px;
+            align-items: center;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            font-size: .76rem;
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: #4f46e5;
+            background: var(--primary-soft);
+            border: 1px solid #dfe2ff;
+            padding: .42rem .8rem;
+            border-radius: 999px;
+        }
+
+        .pill .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, .18);
+        }
+
+        .hero h1 {
+            font-size: clamp(1.85rem, 3.35vw, 2.72rem);
+            font-weight: 800;
+            line-height: 1.12;
+            margin: 20px 0 0;
+        }
+
+        .grad {
+            background: linear-gradient(100deg, #5b5bd6 8%, #8b5cf6 52%, #6366f1 92%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .hero .lead {
+            margin-top: 18px;
+            font-size: 1.02rem;
+            line-height: 1.72;
+            color: var(--muted);
+            max-width: 33rem;
+        }
+
+        .hero-cta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        .hero-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 20px;
+            margin-top: 26px;
+            padding-top: 22px;
+            border-top: 1px solid var(--line);
+        }
+
+        .hero-meta span {
+            display: inline-flex;
+            align-items: center;
+            gap: .45rem;
+            font-size: .82rem;
+            font-weight: 500;
+            color: #475569;
+        }
+
+        .hero-meta i { color: #10b981; font-size: .8rem; }
+
+        /* ---------------- Mock exam card ---------------- */
+        .mock-wrap { position: relative; }
+
+        .mock {
+            position: relative;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            box-shadow: var(--shadow-lg);
+            padding: 20px;
+            z-index: 2;
+        }
+
+        .mock-top {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: .78rem;
+            color: var(--muted);
+            font-weight: 600;
+        }
+
+        .mock-top .live {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #ef4444;
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, .16);
+            flex: none;
+        }
+
+        .mock-timer {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 700;
+            color: #b91c1c;
+            background: #fef2f2;
+            border: 1px solid #fee2e2;
+            padding: .22rem .55rem;
+            border-radius: 999px;
+            font-size: .74rem;
+        }
+
+        .mock-progress {
+            height: 6px;
+            border-radius: 999px;
+            background: #eef0f6;
+            margin: 14px 0 18px;
+            overflow: hidden;
+        }
+
+        .mock-progress span {
+            display: block;
+            height: 100%;
+            width: 35%;
+            border-radius: 999px;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6);
+        }
+
+        .mock-q {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: .95rem;
+            font-weight: 700;
+            line-height: 1.55;
+            color: #1e293b;
+            margin-bottom: 14px;
+        }
+
+        .mock-opts { display: grid; gap: 8px; }
+
+        .mock-opt {
+            display: flex;
+            align-items: center;
+            gap: .6rem;
+            font-size: .83rem;
+            color: #475569;
+            border: 1px solid #eceff6;
+            background: #fbfcfe;
+            border-radius: 10px;
+            padding: .6rem .75rem;
+        }
+
+        .mock-opt .k {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: #eef0f6;
+            color: #64748b;
+            font-size: .68rem;
+            font-weight: 700;
+            display: grid;
+            place-items: center;
+            flex: none;
+        }
+
+        .mock-opt.is-selected {
+            border-color: #c7caff;
+            background: #f5f6ff;
+            color: #3f3fb8;
+            font-weight: 600;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, .08);
+        }
+
+        .mock-opt.is-selected .k { background: #6366f1; color: #fff; }
+
+        .mock-opt .tick { margin-left: auto; color: #6366f1; font-size: .78rem; }
+
+        .mock-foot {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+            padding-top: 14px;
+            border-top: 1px solid #f1f3fa;
+        }
+
+        .mock-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            font-size: .71rem;
+            font-weight: 600;
+            padding: .28rem .55rem;
+            border-radius: 999px;
+        }
+
+        .mock-badge.ok { background: #ecfdf5; color: #047857; border: 1px solid #d1fae5; }
+        .mock-badge.warn { background: #fffbeb; color: #b45309; border: 1px solid #fef3c7; }
+
+        .float-chip {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            gap: .5rem;
+            background: #fff;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: .6rem .8rem;
+            box-shadow: var(--shadow-md);
+            font-size: .76rem;
+            font-weight: 600;
+            color: #334155;
+            z-index: 3;
+        }
+
+        .float-chip i {
+            width: 26px;
+            height: 26px;
+            border-radius: 8px;
+            display: grid;
+            place-items: center;
+            font-size: .72rem;
+            flex: none;
+        }
+
+        .float-chip small { display: block; font-weight: 500; color: var(--subtle); font-size: .68rem; }
+
+        /* Dua keterangan kecil di bawah kartu mock (bukan float, supaya
+           tidak pernah menutupi isi kartu di lebar layar mana pun). */
+        .mock-notes {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .note {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 11px 13px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .note i {
+            width: 28px;
+            height: 28px;
+            border-radius: 9px;
+            display: grid;
+            place-items: center;
+            font-size: .74rem;
+            flex: none;
+        }
+
+        .note b {
+            display: block;
+            font-size: .775rem;
+            font-weight: 700;
+            color: #1e293b;
+            line-height: 1.3;
+        }
+
+        .note small {
+            display: block;
+            font-size: .675rem;
+            font-weight: 500;
+            color: var(--subtle);
+            line-height: 1.35;
+        }
+
+        .note-ok i { background: #ecfdf5; color: #059669; }
+        .note-info i { background: #eef0ff; color: #4f46e5; }
+
+        /* ---------------- Stats ---------------- */
+        .stats {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-sm);
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            padding: 8px 0;
+            margin-top: 8px;
+        }
+
+        .stat {
+            padding: 20px 22px;
+            text-align: center;
+            border-right: 1px solid #f1f3fa;
+        }
+
+        .stat:last-child { border-right: 0; }
+
+        .stat b {
+            display: block;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.85rem;
+            font-weight: 800;
+            letter-spacing: -.03em;
+            color: var(--primary);
+            font-variant-numeric: tabular-nums;
+            line-height: 1.1;
+        }
+
+        .stat span {
+            display: block;
+            margin-top: 4px;
+            font-size: .78rem;
+            font-weight: 600;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--subtle);
+        }
+
+        /* ---------------- Sections ---------------- */
+        .section { padding: 78px 0; }
+
+        .sec-head {
+            max-width: 760px;
+            margin: 0 auto 46px;
+            text-align: center;
+        }
+
+        .sec-head .eyebrow {
+            font-size: .74rem;
+            font-weight: 700;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            color: var(--primary);
+        }
+
+        .sec-head h2 {
+            font-size: clamp(1.55rem, 2.7vw, 2rem);
+            font-weight: 800;
+            margin-top: 10px;
+            line-height: 1.25;
+        }
+
+        .sec-head p {
+            margin-top: 12px;
+            font-size: .98rem;
+            line-height: 1.7;
+            color: var(--muted);
+        }
+
+        /* ---------------- Features ---------------- */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+
+        .feature {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            padding: 26px 24px;
+            box-shadow: var(--shadow-sm);
+            transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease;
+        }
+
+        .feature:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-md);
+            border-color: #dcdff0;
+        }
+
+        .feature .ico {
+            width: 46px;
+            height: 46px;
+            border-radius: 13px;
+            display: grid;
+            place-items: center;
+            font-size: 1.02rem;
+            margin-bottom: 18px;
+        }
+
+        .feature h3 {
+            font-size: 1.02rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .feature p {
+            font-size: .885rem;
+            line-height: 1.65;
+            color: var(--muted);
+        }
+
+        .ico-indigo { background: #eef0ff; color: #4f46e5; }
+        .ico-emerald { background: #ecfdf5; color: #059669; }
+        .ico-violet { background: #f5f3ff; color: #7c3aed; }
+        .ico-amber { background: #fffbeb; color: #b45309; }
+        .ico-rose { background: #fff1f2; color: #e11d48; }
+        .ico-sky { background: #eff6ff; color: #0284c7; }
+
+        /* ---------------- Steps ---------------- */
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            position: relative;
+        }
+
+        .steps::before {
+            content: '';
+            position: absolute;
+            top: 30px;
+            left: 12%;
+            right: 12%;
+            height: 2px;
+            background: repeating-linear-gradient(90deg, #d9ddf0 0 8px, transparent 8px 16px);
+            z-index: 0;
+        }
+
+        .step { position: relative; z-index: 1; text-align: center; }
+
+        .step .num {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 20px;
+            border-radius: 50%;
+            background: #fff;
+            border: 1px solid var(--line);
+            box-shadow: var(--shadow-sm);
+            display: grid;
+            place-items: center;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--primary);
+        }
+
+        .step h3 { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+
+        .step p {
+            font-size: .875rem;
+            line-height: 1.65;
+            color: var(--muted);
+            max-width: 19rem;
+            margin: 0 auto;
+        }
+
+        /* ---------------- Security split ---------------- */
+        .split {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 48px;
+            align-items: center;
+        }
+
+        .split h2 {
+            font-size: clamp(1.55rem, 2.8vw, 2.05rem);
+            font-weight: 800;
+            line-height: 1.2;
+        }
+
+        .split .lead {
+            margin-top: 14px;
+            font-size: .96rem;
+            line-height: 1.72;
+            color: var(--muted);
+        }
+
+        .checks {
+            list-style: none;
+            margin: 26px 0 0;
+            padding: 0;
+            display: grid;
+            gap: 14px;
+        }
+
+        .checks li {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            font-size: .9rem;
+            line-height: 1.6;
+            color: #334155;
+        }
+
+        .checks i {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #ecfdf5;
+            color: #059669;
+            font-size: .66rem;
+            display: grid;
+            place-items: center;
+            flex: none;
+            margin-top: 1px;
+        }
+
+        .checks b { font-weight: 700; color: var(--ink); }
+
+        .monitor {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-md);
+            overflow: hidden;
+        }
+
+        .monitor-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 15px 18px;
+            border-bottom: 1px solid #f1f3fa;
+            font-size: .82rem;
+            font-weight: 700;
+            color: #334155;
+        }
+
+        .monitor-head .live {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 0 3px rgba(34, 197, 94, .18);
+            flex: none;
+        }
+
+        .monitor-head span:last-child {
+            margin-left: auto;
+            font-size: .7rem;
+            font-weight: 600;
+            color: var(--subtle);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+        }
+
+        .monitor-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 13px 18px;
+            border-bottom: 1px solid #f6f7fb;
+        }
+
+        .monitor-row:last-child { border-bottom: 0; }
+
+        .avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 9px;
+            background: linear-gradient(135deg, #eef0ff, #e0e4ff);
+            color: #4f46e5;
+            font-size: .72rem;
+            font-weight: 800;
+            display: grid;
+            place-items: center;
+            flex: none;
+        }
+
+        .monitor-row .who { min-width: 0; }
+
+        .monitor-row .who b {
+            display: block;
+            font-size: .82rem;
+            font-weight: 600;
+            color: #1e293b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .monitor-row .who small { font-size: .71rem; color: var(--subtle); }
+
+        .tag {
+            margin-left: auto;
+            font-size: .68rem;
+            font-weight: 700;
+            padding: .22rem .5rem;
+            border-radius: 999px;
+            white-space: nowrap;
+            flex: none;
+        }
+
+        .tag-ok { background: #ecfdf5; color: #047857; }
+        .tag-warn { background: #fffbeb; color: #b45309; }
+        .tag-off { background: #f1f5f9; color: #64748b; }
+
+        /* ---------------- FAQ ---------------- */
+        .faq { max-width: 780px; margin: 0 auto; display: grid; gap: 10px; }
+
+        .faq details {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 13px;
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            transition: border-color .2s ease;
+        }
+
+        .faq details[open] { border-color: #d5d8f5; }
+
+        .faq summary {
+            cursor: pointer;
+            list-style: none;
+            padding: 17px 20px;
+            font-size: .92rem;
+            font-weight: 600;
+            color: #1e293b;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .faq summary::-webkit-details-marker { display: none; }
+
+        .faq summary::after {
+            content: '\f078';
+            font-family: 'Font Awesome 6 Free';
+            font-weight: 900;
+            font-size: .62rem;
+            color: var(--subtle);
+            margin-left: auto;
+            transition: transform .2s ease;
+        }
+
+        .faq details[open] summary::after { transform: rotate(180deg); }
+
+        .faq .answer {
+            padding: 0 20px 18px;
+            font-size: .885rem;
+            line-height: 1.72;
+            color: var(--muted);
+        }
+
+        /* ---------------- CTA ---------------- */
+        .cta {
+            position: relative;
+            overflow: hidden;
+            border-radius: 22px;
+            background: linear-gradient(120deg, #4f46e5 0%, #6366f1 46%, #7c3aed 100%);
+            color: #fff;
+            padding: 52px 48px;
+            display: flex;
+            align-items: center;
+            gap: 36px;
+            flex-wrap: wrap;
+            box-shadow: 0 34px 70px -34px rgba(79, 70, 229, .7);
+        }
+
+        .cta::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(420px 200px at 88% -20%, rgba(255, 255, 255, .26), transparent 70%),
+                radial-gradient(340px 180px at 8% 120%, rgba(255, 255, 255, .14), transparent 70%);
+            pointer-events: none;
+        }
+
+        .cta > * { position: relative; z-index: 1; }
+
+        .cta h2 {
+            font-size: clamp(1.4rem, 2.6vw, 1.85rem);
+            font-weight: 800;
+            line-height: 1.22;
+        }
+
+        .cta p {
+            margin-top: 10px;
+            font-size: .93rem;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, .82);
+            max-width: 32rem;
+        }
+
+        .cta .btn-white {
+            background: #fff;
+            color: #4338ca;
+            box-shadow: 0 14px 30px -14px rgba(15, 23, 42, .55);
+            margin-left: auto;
+        }
+
+        .cta .btn-white:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 20px 34px -14px rgba(15, 23, 42, .6);
+        }
+
+        /* ---------------- Footer ---------------- */
+        .site-footer {
+            margin-top: 82px;
+            background: #0b1120;
+            color: #cbd5e1;
+            padding: 56px 0 0;
+        }
+
+        .foot-grid {
+            display: grid;
+            grid-template-columns: 1.6fr 1fr 1fr 1.25fr;
+            gap: 40px;
+            padding-bottom: 42px;
+        }
+
+        .foot-brand { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
+
+        .foot-brand img {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            object-fit: contain;
+            background: rgba(255, 255, 255, .06);
+            padding: 2px;
+        }
+
+        .foot-brand b {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: .98rem;
+            font-weight: 800;
+            color: #fff;
+            letter-spacing: -.01em;
+        }
+
+        .foot-about {
+            font-size: .855rem;
+            line-height: 1.72;
+            color: #a3aec0;
+            max-width: 22rem;
+        }
+
+        .foot-col h4 {
+            font-size: .72rem;
+            font-weight: 700;
+            letter-spacing: .13em;
+            text-transform: uppercase;
+            color: #7f8da3;
+            margin-bottom: 16px;
+        }
+
+        .foot-col ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+
+        .foot-col a, .foot-col p {
+            font-size: .855rem;
+            color: #a3aec0;
+            transition: color .15s ease;
+        }
+
+        .foot-col a:hover { color: #fff; }
+
+        .foot-contact li {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: .855rem;
+            line-height: 1.6;
+            color: #a3aec0;
+        }
+
+        .foot-contact i { color: #6366f1; margin-top: 3px; font-size: .82rem; flex: none; }
+
+        .foot-bottom {
+            border-top: 1px solid rgba(148, 163, 184, .16);
+            padding: 20px 0 26px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            flex-wrap: wrap;
+            font-size: .79rem;
+            color: #8494a9;
+        }
+
+        .foot-bottom a { color: #a3aec0; }
+        .foot-bottom a:hover { color: #fff; }
+
+        /* ---------------- Reveal on scroll ---------------- */
+        html.js [data-reveal] {
+            opacity: 0;
+            transform: translateY(16px);
+            transition: opacity .6s ease, transform .6s cubic-bezier(.22, 1, .36, 1);
+            will-change: opacity, transform;
+        }
+
+        html.js [data-reveal].in { opacity: 1; transform: none; }
+
+        @media (prefers-reduced-motion: reduce) {
+            html { scroll-behavior: auto; }
+            html.js [data-reveal] { opacity: 1; transform: none; transition: none; }
+            * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+        }
+
+        /* ---------------- Responsive ---------------- */
+        @media (max-width: 980px) {
+            .hero-grid { grid-template-columns: 1fr; gap: 52px; }
+            .hero .lead { max-width: 40rem; }
+            .mock-wrap { max-width: 520px; }
+            .features { grid-template-columns: repeat(2, 1fr); }
+            .split { grid-template-columns: 1fr; gap: 34px; }
+            .steps::before { display: none; }
+            .steps { grid-template-columns: 1fr; gap: 32px; }
+            .foot-grid { grid-template-columns: 1fr 1fr; gap: 32px; }
+        }
+
+        @media (max-width: 860px) {
+            .nav-links { display: none; }
+            .nav-toggle { display: inline-flex; }
+            .nav-actions .btn { padding: .68rem .9rem; }
+            .nav-mobile.is-open { display: block; }
+            .hero { padding: 44px 0 40px; }
+            .section { padding: 58px 0; }
+        }
+
+        @media (max-width: 480px) {
+            .brand-text strong { font-size: .82rem; }
+            .brand-text small { display: none; }
+            .brand img { width: 32px; height: 32px; }
+        }
+
+        @media (max-width: 640px) {
+            .wrap { padding: 0 18px; }
+            .stats { grid-template-columns: 1fr 1fr; }
+            .stat { padding: 16px 12px; }
+            .stat:nth-child(2) { border-right: 0; }
+            .stat:nth-child(1), .stat:nth-child(2) { border-bottom: 1px solid #f1f3fa; }
+            .stat b { font-size: 1.5rem; }
+            .features { grid-template-columns: 1fr; }
+            .mock-notes { grid-template-columns: 1fr; }
+            .cta { padding: 34px 26px; }
+            .cta .btn-white { margin-left: 0; width: 100%; }
+            .foot-grid { grid-template-columns: 1fr; gap: 30px; }
+            .foot-bottom { justify-content: flex-start; }
+        }
+    
+        /* ===== Aplikasi Android mockup (layered fan, premium) ===== */
+        .app-showcase { position: relative; overflow: hidden; }
+        .app-showcase::before {
+            content: ""; position: absolute; inset: 0;
+            background: radial-gradient(70% 55% at 50% 6%, rgba(99,102,241,.18), transparent 70%);
+            pointer-events: none;
+        }
+        .phone-stage {
+            position: relative;
+            max-width: 960px;
+            height: 624px;
+            margin: 26px auto 4px;
+        }
+        /* ambient glow behind the phones */
+        .phone-stage::before {
+            content: ""; position: absolute; left: 50%; top: 47%;
+            width: 640px; height: 600px; transform: translate(-50%,-50%);
+            background: radial-gradient(circle, rgba(99,102,241,.30), rgba(99,102,241,0) 62%);
+            filter: blur(6px); z-index: 0; pointer-events: none;
+        }
+        /* --- phone body / bezel ("bingkai hp") --- */
+        .device {
+            position: relative;
+            margin: 0;
+            background: linear-gradient(155deg, #2a3346 0%, #11151f 55%, #05070c 100%);
+            border: 2px solid #05070c;
+            border-radius: 42px;
+            padding: 14px 12px 18px;
+            box-shadow:
+                0 46px 80px -30px rgba(3,6,14,.92),
+                0 0 0 2px rgba(255,255,255,.10) inset,
+                0 0 0 4px rgba(0,0,0,.55),
+                0 2px 0 rgba(255,255,255,.07) inset;
+            pointer-events: none;
+            z-index: 1;
+        }
+        /* physical side buttons (power / volume) */
+        .device::before {
+            content: ""; position: absolute; top: 118px; right: -4px;
+            width: 4px; height: 66px; border-radius: 4px;
+            background: linear-gradient(#20283a, #05070c);
+            box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+            z-index: 2;
+        }
+        .device-screen {
+            position: relative;
+            border-radius: 30px;
+            overflow: hidden;
+            background: #0b1020;
+            aspect-ratio: 9 / 19;
+            line-height: 0;
+            border: 1px solid rgba(0,0,0,.6);
+            box-shadow: 0 0 0 1px rgba(0,0,0,.6) inset, 0 0 0 2px rgba(255,255,255,.05) inset;
+        }
+        .device-screen img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        /* notch / dynamic island */
+        .device::after {
+            content: ""; position: absolute; top: 20px; left: 50%;
+            transform: translateX(-50%);
+            width: 72px; height: 10px; border-radius: 99px;
+            background: #04060c; box-shadow: inset 0 0 0 1px rgba(255,255,255,.16);
+            z-index: 4;
+        }
+        /* home indicator bar at the bottom of the screen */
+        .device-screen::after {
+            content: ""; position: absolute; left: 50%; bottom: 9px;
+            transform: translateX(-50%);
+            width: 38%; height: 5px; border-radius: 99px;
+            background: rgba(255,255,255,.55);
+            z-index: 4;
+        }
+        .device-tag {
+            position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+            display: inline-flex; align-items: center; gap: 7px;
+            background: rgba(13,18,33,.80); color: #eaf0fb;
+            font-size: .7rem; font-weight: 700; letter-spacing: .03em;
+            padding: 6px 14px; border-radius: 99px;
+            border: 1px solid rgba(255,255,255,.14); white-space: nowrap;
+            backdrop-filter: blur(6px);
+            box-shadow: 0 10px 22px -12px rgba(0,0,0,.7);
+        }
+        .device-tag::before {
+            content: ""; width: 6px; height: 6px; border-radius: 50%;
+            background: #818cf8; box-shadow: 0 0 8px #818cf8;
+        }
+        /* soft reflection on the hero phone */
+        .device-front .device-screen {
+            -webkit-box-reflect: below 8px linear-gradient(transparent 60%, rgba(0,0,0,.30));
+        }
+        /* layering: center hero + angled phones tucked behind (like reference) */
+        .device-front { position: relative; z-index: 5; width: 258px; margin: 0 auto; }
+        .device-mid {
+            position: absolute; top: 64px; width: 214px; z-index: 3; opacity: .96;
+        }
+        .device-mid.device-left  { left: 50%; margin-left: -107px; transform: translateX(-150px) rotate(-8deg); }
+        .device-mid.device-right { left: 50%; margin-left: -107px; transform: translateX(150px)  rotate(8deg); }
+        .device-back {
+            position: absolute; top: 40px; width: 186px; z-index: 1; opacity: .8;
+        }
+        .device-back.device-left2  { left: 50%; margin-left: -93px; transform: translateX(-300px) rotate(-17deg); }
+        .device-back.device-right2 { left: 50%; margin-left: -93px; transform: translateX(300px)  rotate(17deg); }
+        @media (max-width: 900px) {
+            .phone-stage {
+                height: auto; display: flex; flex-wrap: wrap; gap: 20px;
+                justify-content: center; max-width: 640px;
+            }
+            .phone-stage::before { display: none; }
+            .device, .device-front, .device-mid, .device-back {
+                position: relative !important; top: auto !important; left: auto !important;
+                right: auto !important; margin: 0 !important; transform: none !important;
+                opacity: 1 !important; width: 212px;
+            }
+            .device-front .device-screen { -webkit-box-reflect: none; }
+        }
+        @media (max-width: 560px) {
+            .device, .device-front, .device-mid, .device-back { width: 176px; }
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- ================= Header ================= -->
+    <header class="site-header" id="siteHeader">
+        <div class="wrap nav-inner">
+            <a href="index.php" class="brand">
+                <img src="<?php echo h($appLogo); ?>" alt="Logo <?php echo h($appName); ?>">
+                <span class="brand-text">
+                    <strong><?php echo h($appName); ?></strong>
+                    <?php if ($appYear !== ''): ?>
+                        <small>Tahun Akademik <?php echo h($appYear); ?></small>
+                    <?php else: ?>
+                        <small>Sistem Ujian Online</small>
+                    <?php endif; ?>
+                </span>
+            </a>
+
+            <nav class="nav-links">
+                <a href="#fitur">Fitur</a>
+                <a href="#cara-kerja">Cara Kerja</a>
+                <a href="#keamanan">Keamanan</a>
+                <a href="#faq">FAQ</a>
+            </nav>
+
+            <div class="nav-actions">
+                <a href="login.php" class="btn btn-primary">
+                    <i class="fas fa-right-to-bracket"></i><span>Masuk</span>
+                </a>
+                <button type="button" class="nav-toggle" id="navToggle" aria-label="Buka menu" aria-expanded="false" aria-controls="navMobile">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="nav-mobile" id="navMobile">
+            <a href="#fitur">Fitur</a>
+            <a href="#cara-kerja">Cara Kerja</a>
+            <a href="#keamanan">Keamanan</a>
+            <a href="#faq">FAQ</a>
+        </div>
+    </header>
+
+    <!-- ================= Hero ================= -->
+    <section class="hero">
+        <div class="wrap">
+            <div class="hero-grid">
+                <div data-reveal>
+                    <span class="pill"><span class="dot"></span> Ujian Online Resmi</span>
+
+                    <h1>
+                        Ujian Berbasis Komputer<br>
+                        <span class="grad">Cepat, Aman, Transparan.</span>
+                    </h1>
+
+                    <p class="lead">
+                        Platform CBT untuk olimpiade dan seleksi akademik. Token ujian, deteksi kecurangan,
+                        monitoring langsung, dan penilaian otomatis — termasuk soal esai yang dikoreksi guru.
+                    </p>
+
+                    <div class="hero-cta">
+                        <a href="login.php" class="btn btn-primary btn-lg">
+                            Masuk ke Ujian <i class="fas fa-arrow-right"></i>
+                        </a>
+                        <a href="#cara-kerja" class="btn btn-ghost btn-lg">
+                            Lihat cara kerja
+                        </a>
+                    </div>
+
+                    <div class="hero-meta">
+                        <span><i class="fas fa-circle-check"></i> Tanpa instalasi</span>
+                        <span><i class="fas fa-circle-check"></i> Bisa dari ponsel</span>
+                        <span><i class="fas fa-circle-check"></i> Hasil langsung keluar</span>
+                    </div>
+                </div>
+
+                <!-- Mock tampilan ujian -->
+                <div class="mock-wrap" data-reveal>
+                    <div class="mock">
+                        <div class="mock-top">
+                            <span class="live"></span>
+                            <span>Matematika &middot; Soal 7 dari 20</span>
+                            <span class="mock-timer"><i class="far fa-clock"></i> 27:14</span>
+                        </div>
+
+                        <div class="mock-progress"><span></span></div>
+
+                        <p class="mock-q">Jika f(x) = 2x&sup2; &minus; 3x + 1, berapakah nilai f(3)?</p>
+
+                        <div class="mock-opts">
+                            <div class="mock-opt"><span class="k">A</span> 8</div>
+                            <div class="mock-opt is-selected"><span class="k">B</span> 10 <i class="fas fa-check tick"></i></div>
+                            <div class="mock-opt"><span class="k">C</span> 12</div>
+                            <div class="mock-opt"><span class="k">D</span> 14</div>
+                        </div>
+
+                        <div class="mock-foot">
+                            <span class="mock-badge ok"><i class="fas fa-lock"></i> Jawaban tersimpan</span>
+                            <span class="mock-badge warn"><i class="fas fa-flag"></i> Ragu-ragu</span>
+                        </div>
+                    </div>
+
+                    <div class="mock-notes">
+                        <div class="note note-ok">
+                            <i class="fas fa-shield-halved"></i>
+                            <div>
+                                <b>Anti-cheat aktif</b>
+                                <small>0 pelanggaran tercatat</small>
+                            </div>
+                        </div>
+                        <div class="note note-info">
+                            <i class="fas fa-chart-simple"></i>
+                            <div>
+                                <b>Nilai otomatis</b>
+                                <small>Esai dikoreksi guru</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Angka nyata dari database -->
+            <div class="stats" data-reveal>
+                <div class="stat">
+                    <b><?php echo number_format($siteStats['soal'], 0, ',', '.'); ?></b>
+                    <span>Bank Soal</span>
+                </div>
+                <div class="stat">
+                    <b><?php echo number_format($siteStats['ujian'], 0, ',', '.'); ?></b>
+                    <span>Paket Ujian</span>
+                </div>
+                <div class="stat">
+                    <b><?php echo number_format($siteStats['peserta'], 0, ',', '.'); ?></b>
+                    <span>Peserta</span>
+                </div>
+                <div class="stat">
+                    <b><?php echo number_format($siteStats['mapel'], 0, ',', '.'); ?></b>
+                    <span>Mata Pelajaran</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= Fitur ================= -->
+    <section class="section" id="fitur">
+        <div class="wrap">
+            <div class="sec-head" data-reveal>
+                <span class="eyebrow">Fitur Unggulan</span>
+                <h2>Semua yang dibutuhkan untuk ujian yang adil</h2>
+                <p>Dirancang agar pengawas tenang dan peserta fokus — tanpa perlu memasang aplikasi apa pun.</p>
+            </div>
+
+            <div class="features">
+                <?php
+                $features = [
+                    ['icon' => 'fa-key',           'tone' => 'indigo',  'title' => 'Token Ujian',        'desc' => 'Setiap sesi dibuka dengan token unik, sehingga hanya peserta terdaftar yang bisa masuk.'],
+                    ['icon' => 'fa-shield-halved', 'tone' => 'emerald', 'title' => 'Anti-Kecurangan',    'desc' => 'Deteksi perpindahan tab, keluar layar penuh, dan percobaan menyalin soal secara otomatis.'],
+                    ['icon' => 'fa-tower-broadcast','tone' => 'sky',    'title' => 'Monitoring Langsung','desc' => 'Guru melihat progres, sisa waktu, dan status setiap peserta secara real-time.'],
+                    ['icon' => 'fa-flag',          'tone' => 'amber',   'title' => 'Tandai Ragu-ragu',   'desc' => 'Peserta bisa menandai soal untuk ditinjau ulang sebelum menekan tombol selesai.'],
+                    ['icon' => 'fa-stopwatch',     'tone' => 'rose',    'title' => 'Timer & Auto-submit','desc' => 'Hitung mundur berjalan otomatis; jawaban terkirim sendiri saat waktu habis.'],
+                    ['icon' => 'fa-chart-column',  'tone' => 'violet',  'title' => 'Laporan & Analisis', 'desc' => 'Rekap nilai, jawaban benar-salah, dan koreksi esai dalam satu halaman siap cetak.'],
+                ];
+                foreach ($features as $f):
+                ?>
+                <article class="feature" data-reveal>
+                    <div class="ico ico-<?php echo h($f['tone']); ?>">
+                        <i class="fas <?php echo h($f['icon']); ?>"></i>
+                    </div>
+                    <h3><?php echo h($f['title']); ?></h3>
+                    <p><?php echo h($f['desc']); ?></p>
+                </article>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= Cara Kerja ================= -->
+    <section class="section" id="cara-kerja" style="padding-top: 0;">
+        <div class="wrap">
+            <div class="sec-head" data-reveal>
+                <span class="eyebrow">Cara Kerja</span>
+                <h2>Tiga langkah, langsung ujian</h2>
+                <p>Tidak ada proses pemasangan. Cukup buka browser, masuk, dan mulai.</p>
+            </div>
+
+            <div class="steps">
+                <div class="step" data-reveal>
+                    <div class="num">1</div>
+                    <h3>Masuk dengan akun</h3>
+                    <p>Gunakan username dan password yang diberikan admin atau guru mata pelajaran.</p>
+                </div>
+                <div class="step" data-reveal>
+                    <div class="num">2</div>
+                    <h3>Pilih ujian &amp; isi token</h3>
+                    <p>Token dari pengawas membuka soal. Timer mulai berjalan saat ujian dimulai.</p>
+                </div>
+                <div class="step" data-reveal>
+                    <div class="num">3</div>
+                    <h3>Selesai &amp; lihat hasil</h3>
+                    <p>Nilai pilihan ganda keluar otomatis; soal esai dikoreksi guru lalu masuk ke rekap.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= Keamanan ================= -->
+    <section class="section" id="keamanan" style="padding-top: 0;">
+        <div class="wrap">
+            <div class="split">
+                <div data-reveal>
+                    <span class="eyebrow" style="font-size:.74rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--primary);">Keamanan Ujian</span>
+                    <h2 style="margin-top:10px;">Pengawasan ketat, tanpa mengganggu peserta</h2>
+                    <p class="lead">
+                        Setiap kejadian mencurigakan dicatat dan bisa ditinjau pengawas setelah ujian.
+                        Peserta tetap mendapat peringatan lebih dulu, sehingga yang jujur tidak terganggu.
+                    </p>
+
+                    <ul class="checks">
+                        <li><i class="fas fa-check"></i><span><b>Satu sesi per akun.</b> Login di perangkat lain otomatis mengeluarkan sesi sebelumnya.</span></li>
+                        <li><i class="fas fa-check"></i><span><b>Deteksi keluar layar.</b> Berpindah tab atau keluar dari mode ujian langsung tercatat.</span></li>
+                        <li><i class="fas fa-check"></i><span><b>Soal tidak bisa disalin.</b> Teks soal dilindungi dari seleksi dan klik kanan.</span></li>
+                        <li><i class="fas fa-check"></i><span><b>Jawaban tersimpan bertahap.</b> Koneksi terputus tidak menghilangkan pekerjaan peserta.</span></li>
+                    </ul>
+                </div>
+
+                <div class="monitor" data-reveal>
+                    <div class="monitor-head">
+                        <span class="live"></span>
+                        <span>Monitoring Ujian</span>
+                        <span>Live</span>
+                    </div>
+                    <div class="monitor-row">
+                        <div class="avatar">SS</div>
+                        <div class="who"><b>Syifa Salsabila</b><small>Soal 18 / 20 &middot; 27:14 tersisa</small></div>
+                        <span class="tag tag-ok">Normal</span>
+                    </div>
+                    <div class="monitor-row">
+                        <div class="avatar">AR</div>
+                        <div class="who"><b>Ahmad Rizky</b><small>Soal 12 / 20 &middot; 31:02 tersisa</small></div>
+                        <span class="tag tag-ok">Normal</span>
+                    </div>
+                    <div class="monitor-row">
+                        <div class="avatar">ND</div>
+                        <div class="who"><b>Nadia Putri</b><small>Soal 9 / 20 &middot; 1 pelanggaran</small></div>
+                        <span class="tag tag-warn">Perlu dicek</span>
+                    </div>
+                    <div class="monitor-row">
+                        <div class="avatar">BP</div>
+                        <div class="who"><b>Bagas Pratama</b><small>Selesai &middot; menunggu koreksi esai</small></div>
+                        <span class="tag tag-off">Selesai</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= Aplikasi Android ================= -->
+    <section class="section app-showcase" id="aplikasi">
+        <div class="wrap">
+            <div class="sec-head" data-reveal>
+                <span class="eyebrow">Aplikasi Android</span>
+                <h2>Ujian lengkap di genggaman peserta</h2>
+                <p class="lead">Peserta ikut ujian langsung dari ponsel &mdash; login, ambil token, kerjakan soal, sampai lihat hasil &mdash; tanpa harus buka laptop.</p>
+            </div>
+
+            <div class="phone-stage">
+                <figure class="device-back device-left2">
+                    <div class="device-screen"><img src="assets/img/android/login.png" alt="Login" loading="lazy"></div>
+                    <span class="device-tag">Login</span>
+                </figure>
+                <figure class="device-mid device-left">
+                    <div class="device-screen"><img src="assets/img/android/token.png" alt="Token Ujian" loading="lazy"></div>
+                    <span class="device-tag">Token Ujian</span>
+                </figure>
+                <figure class="device-front">
+                    <div class="device-screen"><img src="assets/img/android/beranda.png" alt="Beranda" loading="lazy"></div>
+                    <span class="device-tag">Beranda</span>
+                </figure>
+                <figure class="device-mid device-right">
+                    <div class="device-screen"><img src="assets/img/android/soal.png" alt="Soal PG" loading="lazy"></div>
+                    <span class="device-tag">Soal PG</span>
+                </figure>
+                <figure class="device-back device-right2">
+                    <div class="device-screen"><img src="assets/img/android/hasil.png" alt="Hasil" loading="lazy"></div>
+                    <span class="device-tag">Hasil</span>
+                </figure>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= FAQ ================= -->
+    <section class="section" id="faq" style="padding-top: 0;">
+        <div class="wrap">
+            <div class="sec-head" data-reveal>
+                <span class="eyebrow">FAQ</span>
+                <h2>Pertanyaan yang sering diajukan</h2>
+            </div>
+
+            <div class="faq">
+                <details data-reveal>
+                    <summary>Bagaimana cara mendapatkan akun peserta?</summary>
+                    <div class="answer">Akun dibuat oleh admin atau guru mata pelajaran. Username dan password dibagikan sebelum jadwal ujian, dan wajib diganti bila diminta pengawas.</div>
+                </details>
+                <details data-reveal>
+                    <summary>Apakah bisa dikerjakan lewat ponsel?</summary>
+                    <div class="answer">Bisa. Tampilan ujian menyesuaikan ukuran layar, dan seluruh fitur — termasuk timer serta penanda ragu-ragu — tetap berjalan. Sambungan internet yang stabil tetap disarankan.</div>
+                </details>
+                <details data-reveal>
+                    <summary>Apa yang terjadi kalau koneksi terputus?</summary>
+                    <div class="answer">Jawaban disimpan setiap kali peserta menjawab, jadi saat koneksi kembali peserta dapat melanjutkan dari soal terakhir. Sisa waktu tetap dihitung sesuai jadwal ujian.</div>
+                </details>
+                <details data-reveal>
+                    <summary>Kapan nilai keluar?</summary>
+                    <div class="answer">Soal pilihan ganda dinilai otomatis begitu ujian selesai. Soal esai dikoreksi guru, lalu nilai akhir serta rincian jawaban dapat dilihat pada halaman hasil ujian.</div>
+                </details>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= CTA ================= -->
+    <section style="padding-bottom: 8px;">
+        <div class="wrap">
+            <div class="cta" data-reveal>
+                <div>
+                    <h2>Siap memulai ujian?</h2>
+                    <p>Masuk dengan akun Anda dan lihat jadwal ujian yang tersedia sekarang.</p>
+                </div>
+                <a href="login.php" class="btn btn-white btn-lg">
+                    <i class="fas fa-right-to-bracket"></i> Masuk Sekarang
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= Footer ================= -->
+    <footer class="site-footer">
+        <div class="wrap">
+            <div class="foot-grid">
+                <div>
+                    <div class="foot-brand">
+                        <img src="<?php echo h($appLogo); ?>" alt="Logo <?php echo h($appName); ?>">
+                        <b><?php echo h($appName); ?></b>
+                    </div>
+                    <p class="foot-about">
+                        Sistem ujian berbasis komputer untuk olimpiade dan seleksi akademik —
+                        cepat, aman, dan transparan.
+                    </p>
+                </div>
+
+                <div class="foot-col">
+                    <h4>Fitur</h4>
+                    <ul>
+                        <li><a href="#fitur">Token Ujian</a></li>
+                        <li><a href="#keamanan">Anti-Kecurangan</a></li>
+                        <li><a href="#keamanan">Monitoring</a></li>
+                        <li><a href="#fitur">Penilaian Esai</a></li>
+                    </ul>
+                </div>
+
+                <div class="foot-col">
+                    <h4>Dukungan</h4>
+                    <ul>
+                        <li><a href="#cara-kerja">Panduan Ujian</a></li>
+                        <li><a href="changelog.php">Changelog</a></li>
+                        <li><a href="#faq">FAQ</a></li>
+                        <li><a href="login.php">Masuk</a></li>
+                    </ul>
+                </div>
+
+                <div class="foot-col">
+                    <h4>Kontak</h4>
+                    <ul class="foot-contact">
+                        <li><i class="fas fa-envelope"></i><span><?php echo h(getSetting('footer_email', 'info@example.com')); ?></span></li>
+                        <li><i class="fas fa-phone"></i><span><?php echo h(getSetting('footer_phone', '-')); ?></span></li>
+                        <li><i class="fas fa-location-dot"></i><span><?php echo h(getSetting('footer_address', '-')); ?></span></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="foot-bottom">
+                <span><?php echo h(getSetting('footer_text', '© ' . date('Y') . ' ' . $appName . '. All rights reserved.')); ?></span>
+                <span>
+                    <a href="#faq">FAQ</a> &nbsp;·&nbsp;
+                    <a href="changelog.php">Changelog</a>
+                </span>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        (function () {
+            // ---- Header shadow saat halaman di-scroll ----
+            var header = document.getElementById('siteHeader');
+            var onScroll = function () {
+                if (window.scrollY > 8) {
+                    header.classList.add('is-stuck');
+                } else {
+                    header.classList.remove('is-stuck');
+                }
+            };
+            window.addEventListener('scroll', onScroll, { passive: true });
+            onScroll();
+
+            // ---- Menu mobile ----
+            var toggle = document.getElementById('navToggle');
+            var panel = document.getElementById('navMobile');
+            if (toggle && panel) {
+                toggle.addEventListener('click', function () {
+                    var open = panel.classList.toggle('is-open');
+                    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                });
+                panel.querySelectorAll('a').forEach(function (a) {
+                    a.addEventListener('click', function () {
+                        panel.classList.remove('is-open');
+                        toggle.setAttribute('aria-expanded', 'false');
+                    });
+                });
+            }
+
+            // ---- Reveal on scroll (pengganti AOS: tanpa jeda tak terlihat) ----
+            var items = document.querySelectorAll('[data-reveal]');
+            var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+            if (!('IntersectionObserver' in window) || reduce) {
+                items.forEach(function (el) { el.classList.add('in'); });
+                return;
+            }
+
+            var io = new IntersectionObserver(function (entries) {
+                entries.forEach(function (entry) {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('in');
+                        io.unobserve(entry.target);
+                    }
+                });
+            }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+
+            items.forEach(function (el, i) {
+                // jeda bertingkat kecil untuk elemen yang berdekatan
+                el.style.transitionDelay = (Math.min(i, 5) * 45) + 'ms';
+                io.observe(el);
+            });
+        })();
+    </script>
+</body>
+</html>
